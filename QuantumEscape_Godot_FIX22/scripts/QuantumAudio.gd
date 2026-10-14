@@ -131,6 +131,13 @@ func _fade_mix(duration: float) -> void:
 
 
 func _build_cues() -> void:
+	_cues["ray"] = _synthesize([
+		Vector4(164.81, 0.0, 0.12, 0.45), Vector4(659.26, 0.025, 0.14, 0.50),
+	], 0.18, true)
+	_cues["freeze"] = _synthesize([
+		Vector4(329.63, 0.0, 0.22, 0.50), Vector4(739.99, 0.06, 0.28, 0.45),
+		Vector4(987.77, 0.12, 0.22, 0.35),
+	], 0.35, true)
 	# Frequencies share the soundtrack's E minor / suspended palette. Each note is
 	# (frequency, start, duration, gain); short fades keep all cue edges click-free.
 	_cues["confirm"] = _synthesize([

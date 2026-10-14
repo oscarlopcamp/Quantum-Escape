@@ -2,21 +2,33 @@
 
 ## Diseño del laboratorio cuántico
 
+- Cuatro niveles en primera persona dentro de un laboratorio 3D, con pasillos, paneles y luces de neón.
 - Menú holográfico, circuitos luminosos y paleta cian/violeta.
-- El personaje es un qubit animado inspirado en la esfera de Bloch; la superposición muestra dos estados fantasma.
+- Emisor de coherencia con un qubit animado inspirado en la esfera de Bloch, mira y radar del laboratorio.
 - Drones rojos, portales verdes y escáneres de medición dorados.
-- Qubits del nivel 4 con indicador de selección y enlace animado al entrelazarse.
+- Qubits del nivel 4 con esfera de Bloch y enlace animado al entrelazarse; cambiar de qubit cambia tu perspectiva.
 - Paneles con objetivo, guía de campo y controles de Xbox.
 
-Los gráficos se dibujan dentro de Godot y se animan automáticamente. Para ver el diseño, abre `project.godot` y pulsa **F5**.
+Los gráficos se generan dentro de Godot y se animan automáticamente. Abre `project.godot` y ejecuta el proyecto con el botón **Ejecutar proyecto**. La escena inicial es `Main3D.tscn`; el proyecto aparece como **Quantum Escape 3D** y el menú ofrece **Iniciar en 3D**.
 
-Capturas: [menú](previews/menu.png), [laberinto](previews/laberinto.png), [entrelazamiento](previews/entrelazamiento.png).
+Capturas: [menú](previews/menu.png), [laberinto 3D](previews/laberinto.png), [rayo cuántico](previews/rayo.png), [superposición](previews/superposicion.png), [entrelazamiento](previews/entrelazamiento.png).
+
+## Rayo y niveles
+
+Apunta con el stick derecho y pulsa **RT** para disparar. El rayo alcanza 28 metros y congela al dron durante **3,5 segundos**: cambia de rojo a cian y muestra el tiempo restante. El emisor se recarga en 0,65 segundos. Las paredes bloquean el disparo, incluso durante la superposición.
+
+1. **Laberinto clásico:** encuentra el portal verde y usa el rayo para abrirte paso entre los drones.
+2. **Superposición:** pulsa A para cambiar de estado y atravesar los muros. Sal del muro antes de volver al estado clásico.
+3. **Medición y colapso:** evita los escáneres M mientras estás en superposición; una medición puede bloquear esa habilidad o atraparte dentro de una pared.
+4. **Entrelazamiento:** lleva Q1 y Q2 a sus estaciones E. Después Q1 toma el color solicitado y Q2 lo lleva al receptor; completa tres entregas.
+
+Los drones vuelven a perseguirte cuando termina la congelación. El rayo los detiene temporalmente; los portales y las mecánicas cuánticas siguen siendo el objetivo de cada nivel.
 
 ## Ambiente sonoro
 
 La música electrónica empieza automáticamente al abrir el juego. Combina sintetizadores y un arpegio espacial con un ritmo que gana presencia en los niveles cuánticos; baja suavemente durante los diálogos. Las dos pistas forman un bucle de 40 segundos y continúan al cambiar de nivel.
 
-La superposición, las mediciones, el cambio de qubit, las entregas y la victoria tienen efectos propios. Pulsa **Y** en el mando o el botón **Sonido** para silenciar o activar la música y los efectos.
+El rayo, la congelación, la superposición, las mediciones, el cambio de qubit, las entregas y la victoria tienen efectos propios. Pulsa **Y** en el mando o el botón **Sonido** para silenciar o activar la música y los efectos.
 
 La composición original está en `audio/quantum_ambient.wav` y `audio/quantum_pulse.wav`. Para regenerarla, usa `python3 tools/generate_quantum_audio.py` con NumPy disponible; el juego reproduce los WAV y no necesita Python.
 
@@ -25,12 +37,14 @@ La composición original está en `audio/quantum_ambient.wav` y `audio/quantum_p
 1. Usa macOS Sequoia 15 o posterior y Godot 4.5 o posterior. Este proyecto ya está configurado para Godot 4.7.
 2. Conecta el control a la Mac con un cable USB-C que transfiera **datos**. Un cable que solo carga no sirve. Si aparece el aviso de acceso al accesorio, pulsa **Permitir**.
 3. Revisa que macOS lo reconozca en **Configuración del Sistema → Controles de videojuegos**.
-4. Abre `project.godot` con Godot y ejecuta con **F5**. Da foco a la ventana del juego. En el menú aparecerá **Mando detectado** junto al nombre del control.
+4. Abre `project.godot` con Godot y pulsa **Ejecutar proyecto**. Da foco a la ventana del juego. En el menú aparecerá **Mando detectado** junto al nombre del control.
 5. Selecciona **Iniciar experimento** con el stick izquierdo o la cruceta y pulsa **A**.
 
 | Acción | Xbox |
 | --- | --- |
 | Moverte o elegir una opción | Stick izquierdo o cruceta |
+| Mirar y apuntar | Stick derecho |
+| Disparar el rayo de coherencia | RT |
 | Aceptar un cuadro o la opción seleccionada | A |
 | Activar/desactivar superposición, niveles 2 y 3 | A |
 | Cambiar el qubit controlado, nivel 4 | A |
@@ -39,7 +53,7 @@ La composición original está en `audio/quantum_ambient.wav` y `audio/quantum_p
 | Salir desde el menú principal | B, o A con Salir seleccionado |
 | Activar o silenciar el sonido | Y |
 
-El stick permite moverte despacio o a velocidad completa según cuánto lo inclines. Tiene una zona muerta del 20 % para evitar movimiento involuntario. El control se puede conectar o desconectar con el juego abierto; el indicador del menú se actualiza automáticamente.
+El stick izquierdo permite moverte despacio o a velocidad completa según cuánto lo inclines. Su zona muerta es del 20 % y la del stick derecho es del 18 %, para evitar movimiento y giro involuntarios. El control se puede conectar o desconectar con el juego abierto; el indicador del menú se actualiza automáticamente.
 
 **Si no se detecta:** prueba otro cable de datos y otro puerto, conecta directamente a la Mac y acepta el permiso del accesorio. Si tampoco aparece en la configuración de macOS, actualiza el firmware del control desde una Xbox o la app Accesorios de Xbox en Windows. La compatibilidad depende del modelo concreto; los mandos de terceros pueden requerir soporte adicional del sistema.
 

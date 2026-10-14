@@ -1,89 +1,83 @@
-extends Node2D
+extends Node3D
 
 const QuantumSprite = preload("res://scripts/QuantumSprite.gd")
 const QuantumBackdrop = preload("res://scripts/QuantumBackdrop.gd")
 const Design = preload("res://scripts/QuantumTheme.gd")
-const QuantumLink = preload("res://scripts/QuantumLink.gd")
 const QuantumAudio = preload("res://scripts/QuantumAudio.gd")
-
-const SCREEN_SIZE: Vector2 = Vector2(1280, 720)
-const CELL: int = 40
-const OFFSET: Vector2 = Vector2(240, 100)
-const PLAYER_SPEED: float = 170.0
-const ENEMY_SPEED: float = 95.0
+const QuantumWorld = preload("res://scripts/QuantumWorld3D.gd")
+const QuantumPlayer = preload("res://scripts/QuantumPlayer3D.gd")
+const QuantumDrone = preload("res://scripts/QuantumDrone3D.gd")
+const TacticalHUD = preload("res://scripts/QuantumTacticalHUD.gd")
+const SCREEN_SIZE := Vector2(1280, 720)
+const CELL: float = 3.0
+const FREEZE_SECONDS: float = 3.5
+const SHOT_COOLDOWN: float = 0.65
 
 var level: int = 1
 var game_started: bool = false
 var game_over: bool = false
 var superposition_active: bool = false
+var superposition_locked: bool = false
 var deaths_level_1: int = 0
 var deaths_level_3: int = 0
 var transitioning_to_level_2: bool = false
-var superposition_locked: bool = false
-
-var player: CharacterBody2D
-var player_shape: CollisionShape2D
-var exit_area: Area2D
-var walls_node: StaticBody2D
-var hud: CanvasLayer
-var menu_layer: CanvasLayer
-var title_label: Label
-var hud_label: Label
-var level_title_label: Label
-var instructions_label: Label
-var message: Label
-var start_button: Button
-var quit_button: Button
-var restart_button: Button
-var menu_button: Button
-var controller_status_label: Label
-var phase_label: Label
-var field_guide_label: Label
-var modal_layer: CanvasLayer
-var modal_title: Label
-var modal_body: Label
-var modal_action: Label
-var modal_mode: String = ""
-var enemies: Array[CharacterBody2D] = []
-var wall_shapes: Array[CollisionShape2D] = []
-var detector_areas: Array[Area2D] = []
-var qbit1: CharacterBody2D
-var qbit2: CharacterBody2D
-var qbit1_visual: QuantumSprite
-var qbit2_visual: QuantumSprite
 var active_qubit: int = 1
 var entangled: bool = false
 var entanglement_round: int = 0
 var requested_color_name: String = ""
 var requested_color_value: Color = Color.WHITE
-var delivery_pending: bool = false
 var current_entangled_color_name: String = ""
 var current_entangled_color_value: Color = Color.WHITE
-var color_pickups: Array[Area2D] = []
-var q1_station: Area2D
-var q2_station: Area2D
-var delivery_area: Area2D
-var delivery_visual: QuantumSprite
-var delivery_label: Label
-var entanglement_status_label: Label
-var generated_root: Node2D
-var entanglement_link: QuantumLink
+var delivery_pending: bool = false
+var ray_cooldown: float = 0.0
+var last_shot_hit: bool = false
+var last_shot_result: Dictionary = {}
+var _path_timer: float = 0.0
+var player: QuantumPlayer
+var qbit1: QuantumPlayer
+var qbit2: QuantumPlayer
+var qbit1_visual: Node3D
+var qbit2_visual: Node3D
+var world: QuantumWorld
+var generated_root: Node3D
+var enemies: Array[QuantumDrone] = []
+var detector_areas: Array[Node3D] = []
+var color_pickups: Array[Node3D] = []
+var exit_area: Node3D
+var q1_station: Node3D
+var q2_station: Node3D
+var delivery_area: Node3D
+var delivery_visual: Node3D
 var soundtrack: QuantumAudio
+var hud: CanvasLayer
+var menu_layer: CanvasLayer
+var modal_layer: CanvasLayer
+var title_label: Label
+var hud_label: Label
+var level_title_label: Label
+var instructions_label: Label
+var message: Label
+var phase_label: Label
+var field_guide_label: Label
+var controller_status_label: Label
+var modal_title: Label
+var modal_body: Label
+var modal_action: Label
+var modal_mode: String = ""
+var start_button: Button
+var quit_button: Button
+var restart_button: Button
+var menu_button: Button
 var audio_toggle_button: Button
+var tactical_hud: TacticalHUD
+var weapon_label: Label
+var phase_overlay: ColorRect
 
 var maze: Array[String] = [
-	"####################",
-	"#P     #        #  #",
-	"# ### ### ####### ##",
-	"#   #     #        #",
-	"### ##### # ###### #",
-	"#     #   #   #    #",
-	"# ### # ##### # ####",
-	"# #   #     # #    #",
-	"# # ####### # #### #",
-	"# #       # #    # #",
-	"# ####### # #### # #",
-	"#       #        #E#",
+	"####################", "#P     #        #  #", "# ### ### ####### ##",
+	"#   #     #        #", "### ##### # ###### #", "#     #   #   #    #",
+	"# ### # ##### # ####", "# #   #     # #    #", "# # ####### # #### #",
+	"# #       # #    # #", "# ####### # #### # #", "#       #        #E#",
 	"####################"
 ]
 
@@ -95,6 +89,7 @@ func _ready() -> void:
 	create_hud()
 	create_modal()
 	create_audio_controls()
+	adapt_fps_interface()
 	show_menu()
 	Input.joy_connection_changed.connect(_on_joy_connection_changed)
 	update_controller_status()
@@ -102,14 +97,24 @@ func _ready() -> void:
 func _physics_process(delta: float) -> void:
 	if not game_started or game_over or is_modal_open():
 		return
+	ray_cooldown = maxf(0.0, ray_cooldown - delta)
+	if Input.is_action_pressed("fire") and ray_cooldown <= 0.0:
+		shoot_ray()
 	if level == 4:
-		move_entanglement_qubits(delta)
 		check_entanglement_level()
-		update_hud()
-		return
-	move_player(delta)
-	move_enemies(delta)
-	check_enemy_collision()
+		update_entanglement_visuals()
+	else:
+		_path_timer -= delta
+		if _path_timer <= 0.0:
+			_path_timer = 0.55
+			update_drone_paths()
+		if is_instance_valid(exit_area) and flat_distance(player.position, exit_area.position) < 0.82:
+			_on_exit_entered(player)
+		if level == 3 and superposition_active and not game_over:
+			for detector in detector_areas:
+				if flat_distance(player.position, detector.position) < 0.95:
+					_on_detector_entered(player, detector)
+					break
 	update_hud()
 
 func _input(event: InputEvent) -> void:
@@ -207,13 +212,13 @@ func create_menu() -> void:
 	menu_layer.add_child(bg)
 
 	add_interface_label(menu_layer, "Q / LAB     ·     COMPUTACIÓN CUÁNTICA", Rect2(100, 48, 600, 30), 14, Design.CYAN)
-	add_interface_label(menu_layer, "SISTEMA EN LÍNEA  /  04 PROTOCOLOS", Rect2(794, 48, 386, 30), 12, Design.MUTED, HORIZONTAL_ALIGNMENT_RIGHT)
+	add_interface_label(menu_layer, "VERSIÓN 3D  /  04 PROTOCOLOS", Rect2(794, 48, 386, 30), 12, Design.MUTED, HORIZONTAL_ALIGNMENT_RIGHT)
 	title_label = add_interface_label(menu_layer, "QUANTUM\nESCAPE", Rect2(94, 116, 570, 179), 64, Design.TEXT)
 	var display_font := SystemFont.new()
 	display_font.font_names = PackedStringArray(["Avenir Next", "Arial"])
 	display_font.font_weight = 800
 	title_label.add_theme_font_override("font", display_font)
-	add_interface_label(menu_layer, "Rompe los límites del mundo clásico.\nExplora superposición, medición\ny entrelazamiento.", Rect2(100, 306, 500, 90), 20, Design.MUTED)
+	add_interface_label(menu_layer, "Entra al laboratorio en primera persona.\nInmoviliza drones con tu rayo\ny rompe los límites del mundo clásico.", Rect2(100, 306, 500, 90), 20, Design.MUTED)
 
 	var hero := QuantumSprite.new()
 	hero.position = Vector2(903, 312)
@@ -228,7 +233,7 @@ func create_menu() -> void:
 	add_interface_label(menu_layer, "01  CLÁSICO      02  SUPERPOSICIÓN\n03  MEDICIÓN    04  ENTRELAZAMIENTO", Rect2(693, 558, 430, 52), 13, Design.MUTED, HORIZONTAL_ALIGNMENT_CENTER)
 
 	start_button = Button.new()
-	start_button.text = "INICIAR EXPERIMENTO    →"
+	start_button.text = "INICIAR EN 3D    →"
 	start_button.position = Vector2(100, 414)
 	start_button.size = Vector2(330, 56)
 	Design.style_button(start_button, true)
@@ -364,8 +369,52 @@ func create_modal() -> void:
 
 	modal_layer.visible = false
 
+func adapt_fps_interface() -> void:
+	# The original holographic console remains, with compact field cards for FPS.
+	menu_layer.get_children()[0].name = "HolographicMenuBackdrop"
+	phase_overlay = ColorRect.new()
+	phase_overlay.size = SCREEN_SIZE
+	phase_overlay.color = Color(Design.VIOLET, 0.045)
+	phase_overlay.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	hud.add_child(phase_overlay)
+	hud.move_child(phase_overlay, 0)
+	phase_overlay.visible = false
+	phase_label.position = Vector2(36, 167)
+	message.position = Vector2(36, 224)
+	message.size = Vector2(132, 273)
+	field_guide_label.text = ""
+	field_guide_label.size.y = 250
+	for item in hud.get_children():
+		if item is Panel and item.position == Vector2(1100, 122):
+			item.size.y = 326
+	tactical_hud = TacticalHUD.new()
+	tactical_hud.game = self
+	hud.add_child(tactical_hud)
+	weapon_label = add_interface_label(hud, "RAYO DE COHERENCIA · LISTO", Rect2(375, 594, 530, 29), 14, Design.CYAN, HORIZONTAL_ALIGNMENT_CENTER)
+	instructions_label.add_theme_font_size_override("font_size", 13)
+
 func is_modal_open() -> bool:
 	return modal_layer != null and modal_layer.visible
+
+func _set_gameplay_enabled(value: bool) -> void:
+	if is_instance_valid(qbit1):
+		qbit1.set_enabled(false)
+	if is_instance_valid(qbit2):
+		qbit2.set_enabled(false)
+	if is_instance_valid(player):
+		player.set_enabled(value)
+		# Keep the paused scene behind dialogs while releasing the pointer.
+		if not value:
+			player.camera.current = true
+	for drone in enemies:
+		drone.enabled = value
+		if not value:
+			drone.velocity = Vector3.ZERO
+	if tactical_hud != null:
+		tactical_hud.visible = value
+	if weapon_label != null:
+		weapon_label.visible = value
+	Input.mouse_mode = Input.MOUSE_MODE_CAPTURED if value else Input.MOUSE_MODE_VISIBLE
 
 func show_modal(title: String, body: String, action: String, mode: String) -> void:
 	soundtrack.set_scene("modal")
@@ -374,7 +423,8 @@ func show_modal(title: String, body: String, action: String, mode: String) -> vo
 	modal_body.text = body
 	modal_action.text = action
 	modal_layer.visible = true
-	var focused_control: Control = get_viewport().gui_get_focus_owner()
+	_set_gameplay_enabled(false)
+	var focused_control := get_viewport().gui_get_focus_owner()
 	if focused_control != null:
 		focused_control.release_focus()
 
@@ -391,17 +441,15 @@ func accept_modal() -> void:
 	elif mode == "to_level_3":
 		deaths_level_3 = 0
 		build_level(3)
-		message.text = "Nivel 3: evita las compuertas M en paredes y caminos. Si te miden, colapsas."
 	elif mode == "to_level_4":
 		build_level(4)
-	elif mode == "to_menu":
-		show_menu()
 	elif mode == "restart_level":
 		build_level(level)
-
+	else:
+		show_menu()
 
 func show_menu() -> void:
-	soundtrack.set_scene("menu")
+	_set_gameplay_enabled(false)
 	if modal_layer != null:
 		hide_modal()
 	game_started = false
@@ -410,317 +458,199 @@ func show_menu() -> void:
 	deaths_level_1 = 0
 	deaths_level_3 = 0
 	clear_old_level()
+	soundtrack.set_scene("menu")
 	menu_layer.visible = true
 	hud.visible = false
-	if start_button != null:
-		start_button.grab_focus()
-
+	start_button.grab_focus()
 
 func start_secret_level(target_level: int) -> void:
-	menu_layer.visible = false
-	hud.visible = true
-	game_started = true
-	game_over = false
 	deaths_level_1 = 0
 	deaths_level_3 = 0
-	transitioning_to_level_2 = false
+	game_started = true
+	menu_layer.visible = false
+	hud.visible = true
 	build_level(target_level)
 
 func _on_start_pressed() -> void:
 	soundtrack.play_cue("confirm")
-	menu_layer.visible = false
-	hud.visible = true
-	game_started = true
-	deaths_level_1 = 0
-	deaths_level_3 = 0
-	transitioning_to_level_2 = false
-	build_level(1)
+	start_secret_level(1)
 
 func _on_quit_pressed() -> void:
+	Input.mouse_mode = Input.MOUSE_MODE_VISIBLE
 	get_tree().quit()
 
 func _on_restart_pressed() -> void:
 	soundtrack.play_cue("confirm")
-	transitioning_to_level_2 = false
 	build_level(level)
 
 func _on_menu_pressed() -> void:
 	soundtrack.play_cue("confirm")
 	show_menu()
 
-func build_level(new_level: int) -> void:
-	if modal_layer != null:
-		hide_modal()
-	level = new_level
-	soundtrack.set_scene("entanglement" if level == 4 else ("quantum" if level >= 2 else "classic"))
-	game_over = false
-	transitioning_to_level_2 = false
-	superposition_active = false
-	superposition_locked = false
-	message.text = ""
-	restart_button.visible = false
-	menu_button.visible = false
-	clear_old_level()
-	if level == 4:
-		create_entanglement_level()
-		update_hud()
-		return
-	create_background()
-	create_walls_and_positions()
-	if level == 3:
-		create_detectors()
-	create_enemies()
-	if level == 2:
-		message.text = "Nivel 2: presiona A para activar/desactivar superposicion"
-	elif level == 3:
-		message.text = "Nivel 3: evita las compuertas M en paredes y caminos. Si te miden, colapsas."
-	else:
-		message.text = "Encuentra el portal verde.\n\nEvita a los drones rojos: en el mundo clásico no puedes atravesar los muros."
-	update_hud()
-
 func clear_old_level() -> void:
-	# Limpieza fuerte: todo el nivel vive dentro de un solo contenedor.
-	# Al reiniciar, morir o cambiar de nivel, se elimina completo y luego
-	# se crean exactamente los mismos 3 enemigos.
-	if generated_root != null and is_instance_valid(generated_root):
+	if is_instance_valid(generated_root):
 		generated_root.free()
-
-	for child in get_children():
-		if child.name.begins_with("Generated"):
-			child.free()
-
-	generated_root = Node2D.new()
-	generated_root.name = "GeneratedLevel"
-	add_child(generated_root)
-	enemies.clear()
-	wall_shapes.clear()
-	detector_areas.clear()
-	color_pickups.clear()
+	generated_root = null
+	world = null
 	player = null
-	exit_area = null
-	walls_node = null
 	qbit1 = null
 	qbit2 = null
 	qbit1_visual = null
 	qbit2_visual = null
+	exit_area = null
 	q1_station = null
 	q2_station = null
 	delivery_area = null
 	delivery_visual = null
-	delivery_label = null
-	entanglement_status_label = null
-	entanglement_link = null
+	enemies.clear()
+	detector_areas.clear()
+	color_pickups.clear()
 
-func create_background() -> void:
-	var bg := QuantumBackdrop.new()
-	bg.name = "GeneratedBackground"
-	bg.mode = "entanglement" if level == 4 else "maze"
-	bg.maze = maze
-	bg.board_offset = OFFSET
-	bg.cell_size = CELL
-	bg.accent = Design.VIOLET if level == 3 else Design.CYAN
-	generated_root.add_child(bg)
-	generated_root.move_child(bg, 0)
+func build_level(new_level: int) -> void:
+	_set_gameplay_enabled(false)
+	hide_modal()
+	clear_old_level()
+	level = new_level
+	game_started = true
+	game_over = false
+	transitioning_to_level_2 = false
+	superposition_active = false
+	superposition_locked = false
+	ray_cooldown = 0.0
+	_path_timer = 0.0
+	last_shot_hit = false
+	last_shot_result = {}
+	menu_layer.visible = false
+	hud.visible = true
+	restart_button.visible = false
+	menu_button.visible = false
+	phase_overlay.visible = false
+	generated_root = Node3D.new()
+	generated_root.name = "GeneratedLevel"
+	add_child(generated_root)
+	world = QuantumWorld.new()
+	world.name = "QuantumLaboratory"
+	generated_root.add_child(world)
+	soundtrack.set_scene("entanglement" if level == 4 else ("quantum" if level >= 2 else "classic"))
+	if level == 4:
+		create_entanglement_level()
+	else:
+		world.build_maze(maze, level)
+		for z in range(maze.size()):
+			for x in range(maze[z].length()):
+				var glyph: String = maze[z].substr(x, 1)
+				var at := Vector3(x * CELL, 0.0, z * CELL)
+				if glyph == "P":
+					player = create_player(at + Vector3(0, 0.85, 0), -PI / 2.0)
+					player.movement_bounds = Rect2(1.9, 1.9, (maze[0].length() - 1) * CELL - 3.8, (maze.size() - 1) * CELL - 3.8)
+				elif glyph == "E":
+					exit_area = world.marker(at, "exit", Color("#6fffc1"), "SALIDA / PORTAL")
+		create_enemies()
+		if level == 3:
+			create_detectors()
+		message.text = "Busca el portal verde.\n\nRT inmoviliza a los drones por 3,5 s."
+		if level == 2:
+			message.text = "A activa la superposición.\n\nAtraviesa los muros y alcanza el portal."
+		elif level == 3:
+			message.text = "Evita los escáneres M mientras estás en superposición."
+	_set_gameplay_enabled(true)
+	update_hud()
 
-func create_walls_and_positions() -> void:
-	walls_node = StaticBody2D.new()
-	walls_node.name = "GeneratedWalls"
-	generated_root.add_child(walls_node)
-
-	for y in maze.size():
-		for x in maze[y].length():
-			var c: String = maze[y].substr(x, 1)
-			var pos: Vector2 = OFFSET + Vector2(x * CELL + CELL / 2, y * CELL + CELL / 2)
-			if c == "#":
-				create_wall(pos)
-			elif c == "P":
-				create_player(pos)
-			elif c == "E":
-				create_exit(pos)
-
-func create_wall(pos: Vector2) -> void:
-	# The backdrop draws the circuit tiles; collision still occupies each cell.
-	var shape: CollisionShape2D = CollisionShape2D.new()
-	var box: RectangleShape2D = RectangleShape2D.new()
-	box.size = Vector2(CELL, CELL)
-	shape.shape = box
-	shape.position = pos
-	walls_node.add_child(shape)
-	wall_shapes.append(shape)
-
-func create_player(pos: Vector2) -> void:
-	player = CharacterBody2D.new()
-	player.name = "GeneratedPlayer"
-	player.position = pos
-	generated_root.add_child(player)
-
-	player_shape = CollisionShape2D.new()
-	var circle: CircleShape2D = CircleShape2D.new()
-	circle.radius = 13
-	player_shape.shape = circle
-	player.add_child(player_shape)
-
-	var sprite := QuantumSprite.new()
-	sprite.name = "PlayerVisual"
-	sprite.color = Design.CYAN
-	sprite.radius = 13.0
-	player.z_index = 10
-	player.add_child(sprite)
-
-func create_exit(pos: Vector2) -> void:
-	exit_area = Area2D.new()
-	exit_area.name = "GeneratedExit"
-	exit_area.position = pos
-	generated_root.add_child(exit_area)
-
-	var shape: CollisionShape2D = CollisionShape2D.new()
-	var box: RectangleShape2D = RectangleShape2D.new()
-	box.size = Vector2(28, 28)
-	shape.shape = box
-	exit_area.add_child(shape)
-
-	var visual := QuantumSprite.new()
-	visual.kind = "exit"
-	visual.color = Color("#6fffc1")
-	visual.radius = 15.0
-	exit_area.add_child(visual)
-	exit_area.body_entered.connect(_on_exit_entered)
+func create_player(at: Vector3, yaw: float) -> QuantumPlayer:
+	var body := QuantumPlayer.new()
+	body.position = at
+	generated_root.add_child(body)
+	body.set_look_angles(yaw)
+	return body
 
 func create_enemies() -> void:
-	enemies.clear()
-	var enemy_positions: Array[Vector2] = [Vector2(15, 1), Vector2(1, 9), Vector2(17, 7)]
-	for cell in enemy_positions:
-		var e: CharacterBody2D = CharacterBody2D.new()
-		e.name = "GeneratedEnemy"
-		e.position = OFFSET + Vector2(cell.x * CELL + CELL / 2, cell.y * CELL + CELL / 2)
-		generated_root.add_child(e)
-
-		var shape: CollisionShape2D = CollisionShape2D.new()
-		var circle: CircleShape2D = CircleShape2D.new()
-		circle.radius = 14
-		shape.shape = circle
-		e.add_child(shape)
-
-		var visual := QuantumSprite.new()
-		visual.kind = "enemy"
-		visual.color = Color("#ff6b83")
-		visual.radius = 14.0
-		e.z_index = 9
-		e.add_child(visual)
-		enemies.append(e)
+	for cell in [Vector2i(15, 1), Vector2i(1, 9), Vector2i(17, 7)]:
+		var drone := QuantumDrone.new()
+		drone.name = "QuantumSentinel"
+		drone.position = Vector3(cell.x * CELL, 1.3, cell.y * CELL)
+		drone.target = player
+		generated_root.add_child(drone)
+		drone.caught_player.connect(die)
+		enemies.append(drone)
+	update_drone_paths()
 
 func create_detectors() -> void:
-	detector_areas.clear()
-	# Nivel 3: hay compuertas de medicion en paredes y tambien en el camino.
-	# Las de pared castigan cruzar muros en superposicion; las del camino
-	# obligan al jugador a decidir por donde avanzar para evitar colapsar.
-	var wall_detector_positions: Array[Vector2] = [
-		Vector2(7, 1),
-		Vector2(4, 3),
-		Vector2(10, 4),
-		Vector2(14, 5),
-		Vector2(12, 8),
-		Vector2(17, 10)
-	]
-	var path_detector_positions: Array[Vector2] = [
-		Vector2(5, 1),
-		Vector2(9, 3),
-		Vector2(3, 5),
-		Vector2(8, 5),
-		Vector2(11, 7),
-		Vector2(5, 9),
-		Vector2(14, 11)
-	]
-
-	for cell in wall_detector_positions:
+	var walls: Array[Vector2i] = [Vector2i(7, 1), Vector2i(4, 3), Vector2i(10, 4), Vector2i(14, 5), Vector2i(12, 8), Vector2i(17, 10)]
+	var paths: Array[Vector2i] = [Vector2i(5, 1), Vector2i(9, 3), Vector2i(3, 5), Vector2i(8, 5), Vector2i(11, 7), Vector2i(5, 9), Vector2i(14, 11)]
+	for cell in walls:
 		create_detector(cell, true)
-	for cell in path_detector_positions:
+	for cell in paths:
 		create_detector(cell, false)
 
-func create_detector(cell: Vector2, in_wall: bool) -> void:
-	var detector: Area2D = Area2D.new()
-	detector.name = "GeneratedWallDetector" if in_wall else "GeneratedPathDetector"
-	detector.position = OFFSET + Vector2(cell.x * CELL + CELL / 2, cell.y * CELL + CELL / 2)
+func create_detector(cell: Vector2i, in_wall: bool) -> void:
+	var detector := world.marker(Vector3(cell.x * CELL, 0, cell.y * CELL), "detector", Design.GOLD, "MEDICIÓN / M")
 	detector.set_meta("in_wall", in_wall)
-	generated_root.add_child(detector)
-
-	var shape: CollisionShape2D = CollisionShape2D.new()
-	var box: RectangleShape2D = RectangleShape2D.new()
-	box.size = Vector2(42, 42)
-	shape.shape = box
-	detector.add_child(shape)
-
-	var visual := QuantumSprite.new()
-	visual.name = "DetectorVisual"
-	visual.kind = "detector"
-	visual.color = Design.GOLD
-	visual.radius = 19.0
-	detector.add_child(visual)
-
-	var label: Label = Label.new()
-	label.text = "M"
-	label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
-	Design.style_label(label, 12, Design.GOLD)
-	label.position = Vector2(-20, -20)
-	label.size = Vector2(40, 40)
-	detector.add_child(label)
-
-	detector.body_entered.connect(_on_detector_entered.bind(detector))
+	if in_wall:
+		detector.rotation.y = PI / 2.0
 	detector_areas.append(detector)
 
-func move_player(delta: float) -> void:
-	var input_vector: Vector2 = Input.get_vector("move_left", "move_right", "move_up", "move_down")
-	player.velocity = input_vector * PLAYER_SPEED
-
-	if superposition_active:
-		player.position += player.velocity * delta
-	else:
-		player.move_and_slide()
-
-func move_enemies(_delta: float) -> void:
-	for e in enemies:
-		var direction: Vector2 = (player.global_position - e.global_position).normalized()
-		e.velocity = direction * ENEMY_SPEED
-		e.move_and_slide()
+func shoot_ray() -> bool:
+	if not game_started or game_over or is_modal_open() or ray_cooldown > 0.0 or not is_instance_valid(player) or not player.enabled:
+		return false
+	ray_cooldown = SHOT_COOLDOWN
+	last_shot_result = player.fire_ray()
+	var endpoint: Vector3 = player.camera.global_position - player.camera.global_basis.z * QuantumPlayer.RAY_RANGE
+	last_shot_hit = false
+	if not last_shot_result.is_empty():
+		endpoint = last_shot_result["position"]
+		var drone: QuantumDrone = last_shot_result.get("collider") as QuantumDrone
+		if drone != null and drone.enabled:
+			drone.freeze(FREEZE_SECONDS)
+			last_shot_hit = true
+	world.spawn_beam(player.get_muzzle_position(), endpoint, last_shot_hit)
+	player.animate_shot()
+	tactical_hud.shot_flash = 0.16
+	tactical_hud.hit_flash = 0.18 if last_shot_hit else 0.0
+	soundtrack.play_cue("freeze" if last_shot_hit else "ray")
+	return last_shot_hit
 
 func toggle_superposition() -> void:
-	if level == 3 and superposition_locked:
-		message.text = "Tu estado ya colapso por una medicion. No puedes volver a activar la superposicion en este intento."
+	if level < 2 or level > 3 or superposition_locked:
+		message.text = "Tu estado colapsó. Ya no puedes activar la superposición en este intento."
 		return
-
+	if superposition_active and is_wall_at(player.position):
+		message.text = "Sal del muro antes de volver al estado clásico."
+		return
 	superposition_active = not superposition_active
+	player.superposed = superposition_active
+	world.set_phase(superposition_active)
+	phase_overlay.visible = superposition_active
 	soundtrack.play_cue("superposition_on" if superposition_active else "superposition_off")
-	set_player_superposition_visual(superposition_active)
-	if superposition_active:
-		if level == 3:
-			message.text = "Superposicion activa. Cuidado: si una compuerta M te mide, colapsas definitivamente."
-		else:
-			message.text = "Superposicion activa: puedes atravesar paredes sin limite de tiempo"
+	message.text = "Superposición activa. Puedes atravesar los muros." if superposition_active else "Estado clásico. Los muros vuelven a ser sólidos."
+	update_hud()
+
+func _on_detector_entered(body: Node3D, detector: Node3D) -> void:
+	if body != player or game_over or level != 3 or not superposition_active:
+		return
+	superposition_active = false
+	superposition_locked = true
+	player.superposed = false
+	world.set_phase(false)
+	phase_overlay.visible = false
+	soundtrack.play_cue("collapse")
+	if bool(detector.get_meta("in_wall")):
+		handle_wall_collapse()
 	else:
-		message.text = "Superposicion desactivada"
+		message.text = "¡MEDICIÓN! Tu estado colapsó. Debes llegar al portal sin atravesar muros."
+	update_hud()
 
-func set_player_superposition_visual(active: bool) -> void:
-	# Importante: no apagamos las paredes.
-	# El jugador atraviesa porque en move_player se mueve por posicion,
-	# pero los enemigos siguen usando move_and_slide y chocan con el laberinto.
-	if player != null:
-		var player_visual: QuantumSprite = player.get_node("PlayerVisual") as QuantumSprite
-		if player_visual != null:
-			player_visual.superposed = active
-			player_visual.color = Design.VIOLET if active else Design.CYAN
-
-func check_enemy_collision() -> void:
-	for e in enemies:
-		if e.global_position.distance_to(player.global_position) < 27.0:
-			die()
-			return
+func handle_wall_collapse() -> void:
+	deaths_level_3 += 1
+	game_over = true
+	if deaths_level_3 >= 3:
+		start_final_game_over()
+	else:
+		show_modal("ATRAPADO", "Colapsaste dentro del muro.\nReinicia el nivel.\nIntento %d de 3." % deaths_level_3, "[A] Reiniciar", "restart_level")
 
 func die() -> void:
-	if game_over or transitioning_to_level_2:
+	if not game_started or game_over or is_modal_open():
 		return
 	soundtrack.play_cue("caught")
-
 	if level == 1:
 		deaths_level_1 += 1
 		if deaths_level_1 >= 3:
@@ -731,470 +661,244 @@ func die() -> void:
 		if deaths_level_3 >= 3:
 			start_final_game_over()
 			return
-
 	game_over = true
-	if level == 1:
-		message.text = "Te atraparon. Moriste. Intento %d de 3." % deaths_level_1
-	elif level == 3:
-		message.text = "Te atraparon. Intento %d de 3 en el nivel de medicion." % deaths_level_3
-	else:
-		message.text = "Te atraparon. Moriste."
+	_set_gameplay_enabled(false)
+	message.text = "Un dron te alcanzó.\n\nReinicia o vuelve al menú."
 	restart_button.visible = true
 	menu_button.visible = true
 	restart_button.grab_focus()
+	update_hud()
 
 func start_quantum_transition() -> void:
 	transitioning_to_level_2 = true
 	game_over = true
 	restart_button.visible = false
 	menu_button.visible = false
-	message.text = ""
-	show_modal(
-		"¡INTERESANTE!",
-		"¿Ves? No es tan facil encontrar la salida cuando estas limitado a una unica posicion.\n\nAhora probemos una propiedad cuantica: la SUPERPOSICION.",
-		"[A] Continuar al Nivel 2",
-		"to_level_2"
-	)
+	show_modal("NUEVO ESTADO", "El mundo clásico tiene límites.\n\nActiva la SUPERPOSICIÓN para atravesar muros. Tu rayo de coherencia seguirá inmovilizando drones.", "[A] Continuar al Nivel 2", "to_level_2")
 
 func start_final_game_over() -> void:
 	game_over = true
 	restart_button.visible = false
 	menu_button.visible = false
-	message.text = ""
-	show_modal(
-		"FIN DEL JUEGO",
-		"Llegaste al tercer intento del nivel de medicion.\n\nLa superposicion es poderosa, pero al ser medida colapsa y ya no puede usarse en ese intento.",
-		"[A] Volver al Menu Principal",
-		"to_menu"
-	)
+	show_modal("FIN DEL JUEGO", "Llegaste al tercer intento del nivel de medición.\n\nLa superposición colapsa al ser medida. Vuelve al laboratorio e inténtalo de nuevo.", "[A] Menú Principal", "to_menu")
 
-func _on_exit_entered(body: Node2D) -> void:
-	if body != player or game_over:
+func _on_exit_entered(body: Node3D) -> void:
+	if body != player or game_over or is_modal_open():
 		return
 	soundtrack.play_cue("confirm")
 	if level == 1:
 		deaths_level_1 = 0
 		build_level(2)
-		message.text = "Nivel 2: presiona A para activar/desactivar superposicion"
 	elif level == 2:
 		game_over = true
-		restart_button.visible = false
-		menu_button.visible = false
-		message.text = ""
-		show_modal(
-			"NUEVO CONCEPTO",
-			"Ya usaste la superposicion para atravesar paredes.\n\nAhora veras que al medir un sistema cuantico, su superposicion puede colapsar.",
-			"[A] Continuar al Nivel 3",
-			"to_level_3"
-		)
+		show_modal("MEDICIÓN CUÁNTICA", "Ya puedes atravesar muros.\n\nAhora evita los escáneres M: si te miden, tu estado colapsará.", "[A] Continuar al Nivel 3", "to_level_3")
 	elif level == 3:
 		game_over = true
-		restart_button.visible = false
-		menu_button.visible = false
-		message.text = ""
-		show_modal(
-			"NUEVO CONCEPTO",
-			"Completaste el nivel de medicion y colapso.\n\nAhora veremos el ENTRELAZAMIENTO: dos qubits compartiran un mismo estado, de modo que cambiar uno afectara al otro.",
-			"[A] Continuar al Nivel 4",
-			"to_level_4"
-		)
-
-func _on_detector_entered(body: Node2D, detector: Area2D) -> void:
-	if body != player or game_over or level != 3:
-		return
-
-	# La medicion solo castiga si el jugador todavia estaba en superposicion.
-	# Si ya colapso antes, tocar otra compuerta M no debe reiniciar el nivel.
-	if not superposition_active:
-		return
-	soundtrack.play_cue("collapse")
-
-	var in_wall: bool = detector.get_meta("in_wall") as bool
-	superposition_active = false
-	superposition_locked = true
-	set_player_superposition_visual(false)
-
-	if in_wall:
-		handle_wall_collapse()
-	else:
-		message.text = "¡MEDICION! Colapsaste. Ya no puedes activar superposicion en este intento."
-
-func handle_wall_collapse() -> void:
-	deaths_level_3 += 1
-	if deaths_level_3 >= 3:
-		start_final_game_over()
-		return
-
-	game_over = true
-	restart_button.visible = false
-	menu_button.visible = false
-	message.text = ""
-	show_modal(
-		"ATRAPADO",
-		"Colapsaste dentro del muro.\nReinicia el nivel.\nIntento %d de 3." % deaths_level_3,
-		"[A] Reiniciar",
-		"restart_level"
-	)
+		show_modal("ENTRELAZAMIENTO", "Dos qubits compartirán un estado.\n\nA cambia la perspectiva entre Q1 y Q2. Acerca ambos a E y entrega los colores que pide el receptor.", "[A] Continuar al Nivel 4", "to_level_4")
 
 func create_entanglement_level() -> void:
-	create_background()
-	enemies.clear()
+	world.build_entanglement()
 	active_qubit = 1
 	entangled = false
 	entanglement_round = 0
 	requested_color_name = ""
-	requested_color_value = Color.WHITE
-	delivery_pending = false
 	current_entangled_color_name = ""
 	current_entangled_color_value = Color.WHITE
-	message.text = "Nivel 4: cambia de qubit con A. Acerca ambos a las estaciones E del centro."
-
-	# Marco exterior
-	create_entanglement_wall(Vector2(640, 90), Vector2(880, 24))
-	create_entanglement_wall(Vector2(640, 630), Vector2(880, 24))
-	create_entanglement_wall(Vector2(200, 360), Vector2(24, 540))
-	create_entanglement_wall(Vector2(1080, 360), Vector2(24, 540))
-
-	# Division central: separa los dos espacios.
-	create_entanglement_wall(Vector2(640, 245), Vector2(24, 250))
-	create_entanglement_wall(Vector2(640, 475), Vector2(24, 250))
-
-
-	q1_station = create_entanglement_pad(Vector2(585, 360), Color(0.2, 0.8, 1.0, 0.65), "E")
-	q2_station = create_entanglement_pad(Vector2(695, 360), Color(0.7, 0.3, 1.0, 0.65), "E")
-
-	qbit1 = create_qubit(Vector2(320, 360), Design.CYAN, "1")
-	qbit2 = create_qubit(Vector2(960, 360), Design.VIOLET, "2")
-	entanglement_link = QuantumLink.new()
-	entanglement_link.first = qbit1
-	entanglement_link.second = qbit2
-	entanglement_link.z_index = 3
-	generated_root.add_child(entanglement_link)
-
-	delivery_area = create_entanglement_pad(Vector2(960, 510), Color(1.0, 0.9, 0.25, 0.55), "R")
-	delivery_visual = delivery_area.get_node("PadVisual") as QuantumSprite
-	delivery_label = delivery_area.get_node("PadLabel") as Label
-	create_entanglement_label("RECEPTOR", Vector2(895, 553), 13)
-
-	create_color_pickup(Vector2(330, 220), "rojo", Color(1.0, 0.16, 0.16))
-	create_color_pickup(Vector2(330, 360), "azul", Color(0.2, 0.45, 1.0))
-	create_color_pickup(Vector2(330, 500), "verde", Color(0.25, 1.0, 0.35))
-
-	entanglement_status_label = null
+	delivery_pending = false
+	# Presenta la cámara hacia E sin un cristal de color pegado a la mira.
+	var q1_start := Vector3(-8, 0.85, -2.4)
+	qbit1 = create_player(q1_start, -PI / 2.0 - atan2(2.4, 6.1))
+	qbit2 = create_player(Vector3(8, 0.85, 0), PI / 2.0)
+	qbit1.movement_bounds = Rect2(-10.0, -7.0, 8.85, 14.0)
+	qbit2.movement_bounds = Rect2(1.15, -7.0, 8.85, 14.0)
+	qbit1_visual = world.marker(q1_start - Vector3(0, 0.85, 0), "qubit", Design.CYAN, "QUBIT 1")
+	qbit2_visual = world.marker(Vector3(8, 0, 0), "qubit", Design.VIOLET, "QUBIT 2")
+	q1_station = world.marker(Vector3(-1.9, 0, 0), "pad", Design.CYAN, "E / Q1")
+	q2_station = world.marker(Vector3(1.9, 0, 0), "pad", Design.VIOLET, "E / Q2")
+	delivery_area = world.marker(Vector3(7, 0, 4.5), "pad", Design.GOLD, "RECEPTOR / R")
+	delivery_visual = delivery_area
+	create_color_pickup(Vector3(-7, 0, -4.6), "rojo", Color("#ff667c"))
+	create_color_pickup(Vector3(-7, 0, 0), "azul", Color("#51a8ff"))
+	create_color_pickup(Vector3(-7, 0, 4.6), "verde", Color("#6fffc1"))
+	player = qbit1
+	message.text = "A cambia de qubit.\n\nAcerca Q1 y Q2 a sus estaciones E para enlazarlos."
 	update_entanglement_visuals()
 
-func create_entanglement_wall(center: Vector2, size: Vector2) -> void:
-	var wall := Panel.new()
-	wall.name = "GeneratedEntanglementWall"
-	wall.position = center - size / 2
-	wall.size = size
-	wall.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	var style: StyleBoxFlat = Design.panel_style(Design.CYAN, Color("#193449"))
-	style.set_corner_radius_all(3)
-	style.shadow_size = 0
-	style.border_color = Color(Design.CYAN, 0.45)
-	wall.add_theme_stylebox_override("panel", style)
-	generated_root.add_child(wall)
+func create_color_pickup(at: Vector3, color_name: String, value: Color) -> void:
+	var pickup := world.marker(at, "pickup", value, color_name.to_upper())
+	pickup.set_meta("color_name", color_name)
+	pickup.set_meta("color_value", value)
+	color_pickups.append(pickup)
 
-func create_entanglement_label(text: String, pos: Vector2, font_size: int) -> Label:
-	var label: Label = Label.new()
-	label.text = text
-	label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	Design.style_label(label, font_size, Design.MUTED)
-	label.position = pos
-	label.size = Vector2(130, 30)
-	label.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	generated_root.add_child(label)
-	return label
-
-func create_entanglement_pad(pos: Vector2, color: Color, label_text: String) -> Area2D:
-	var area: Area2D = Area2D.new()
-	area.position = pos
-	generated_root.add_child(area)
-
-	var shape: CollisionShape2D = CollisionShape2D.new()
-	var box: RectangleShape2D = RectangleShape2D.new()
-	box.size = Vector2(58, 58)
-	shape.shape = box
-	area.add_child(shape)
-
-	var visual := QuantumSprite.new()
-	visual.name = "PadVisual"
-	visual.kind = "pad"
-	visual.color = color
-	visual.radius = 29.0
-	area.add_child(visual)
-
-	var label: Label = Label.new()
-	label.name = "PadLabel"
-	label.text = label_text
-	label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
-	Design.style_label(label, 18, Design.TEXT)
-	label.position = Vector2(-29, -29)
-	label.size = Vector2(58, 58)
-	area.add_child(label)
-	return area
-
-func create_qubit(pos: Vector2, color: Color, label_text: String) -> CharacterBody2D:
-	var q: CharacterBody2D = CharacterBody2D.new()
-	q.position = pos
-	generated_root.add_child(q)
-
-	var shape: CollisionShape2D = CollisionShape2D.new()
-	var circle: CircleShape2D = CircleShape2D.new()
-	circle.radius = 18
-	shape.shape = circle
-	q.add_child(shape)
-
-	var visual := QuantumSprite.new()
-	visual.name = "QubitVisual"
-	visual.color = color
-	visual.radius = 18.0
-	q.z_index = 10
-	q.add_child(visual)
-
-	var label: Label = Label.new()
-	label.name = "PadLabel"
-	label.text = "Q" + label_text
-	label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
-	Design.style_label(label, 12, Design.TEXT)
-	label.position = Vector2(-22, -42)
-	label.size = Vector2(44, 20)
-	q.add_child(label)
-
-	if label_text == "1":
-		qbit1_visual = visual
-	else:
-		qbit2_visual = visual
-	return q
-
-func create_color_pickup(pos: Vector2, color_name: String, color_value: Color) -> void:
-	var area: Area2D = Area2D.new()
-	area.position = pos
-	area.set_meta("color_name", color_name)
-	area.set_meta("color_value", color_value)
-	generated_root.add_child(area)
-
-	var shape: CollisionShape2D = CollisionShape2D.new()
-	var box: RectangleShape2D = RectangleShape2D.new()
-	box.size = Vector2(54, 54)
-	shape.shape = box
-	area.add_child(shape)
-
-	var visual := QuantumSprite.new()
-	visual.name = "PadVisual"
-	visual.kind = "pad"
-	visual.color = color_value
-	visual.radius = 27.0
-	area.add_child(visual)
-
-	var label: Label = Label.new()
-	label.text = color_name.substr(0, 1).to_upper()
-	label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
-	Design.style_label(label, 17, Design.TEXT)
-	label.position = Vector2(-27, -27)
-	label.size = Vector2(54, 54)
-	area.add_child(label)
-	color_pickups.append(area)
+func _activate_qubit(which: int) -> void:
+	qbit1.set_enabled(false)
+	qbit2.set_enabled(false)
+	active_qubit = which
+	player = qbit1 if which == 1 else qbit2
+	player.set_enabled(game_started and not game_over and not is_modal_open())
+	update_entanglement_visuals()
 
 func handle_entanglement_space() -> void:
 	soundtrack.play_cue("switch")
-	active_qubit = 2 if active_qubit == 1 else 1
-	if entangled:
-		if delivery_pending and active_qubit == 2:
-			message.text = "Ahora controla el Qubit 2 y llevalo al receptor para entregar %s." % current_entangled_color_name.to_upper()
-		elif active_qubit == 1:
-			message.text = "Controlas el Qubit 1. Toma el color que pide el receptor."
-		else:
-			message.text = "Controlas el Qubit 2. Cuando Qubit 1 tome un color, ven al receptor a entregarlo."
-	else:
-		message.text = "Ahora controlas el Qubit %d. Acercalo a su estacion E." % active_qubit
-	update_entanglement_visuals()
-
-func move_entanglement_qubits(delta: float) -> void:
-	var input_vector: Vector2 = Input.get_vector("move_left", "move_right", "move_up", "move_down")
-	var movement: Vector2 = input_vector * PLAYER_SPEED * delta
-	if movement == Vector2.ZERO:
-		return
-
-	var q: CharacterBody2D = qbit1 if active_qubit == 1 else qbit2
-	if q == null:
-		return
-	q.position = clamp_entanglement_position(q.position + movement, active_qubit)
-
-func clamp_entanglement_position(pos: Vector2, qid: int) -> Vector2:
-	pos.y = clamp(pos.y, 120.0, 600.0)
-	if qid == 1:
-		pos.x = clamp(pos.x, 230.0, 610.0)
-	else:
-		pos.x = clamp(pos.x, 670.0, 1050.0)
-	return pos
+	_activate_qubit(2 if active_qubit == 1 else 1)
+	message.text = "Controlas Q%d.\n\n%s" % [active_qubit, "Llega a tu estación E." if not entangled else ("Toma el color pedido." if active_qubit == 1 else "Entrega el color en el receptor.")]
+	update_hud()
 
 func check_entanglement_level() -> void:
-	if qbit1 == null or qbit2 == null:
+	if game_over or is_modal_open() or not is_instance_valid(qbit1) or not is_instance_valid(qbit2):
 		return
 	if not entangled:
-		var q1_ready: bool = qbit1.global_position.distance_to(q1_station.global_position) < 36.0
-		var q2_ready: bool = qbit2.global_position.distance_to(q2_station.global_position) < 36.0
-		if q1_ready and q2_ready:
+		if flat_distance(qbit1.position, q1_station.position) < 1.0 and flat_distance(qbit2.position, q2_station.position) < 1.0:
 			entangled = true
-			soundtrack.play_cue("entangled")
-			active_qubit = 1
 			start_next_entanglement_round()
-			message.text = "⚡ Entrelazamiento establecido. Ahora toma con el Qubit 1 el color que pide el receptor."
-		else:
-			var status: String = ""
-			status += "Qubit 1 en E: SI" if q1_ready else "Qubit 1 en E: NO"
-			status += "    |    "
-			status += "Qubit 2 en E: SI" if q2_ready else "Qubit 2 en E: NO"
-			# Estado visible arriba en el HUD; evitamos texto abajo para no encimar el receptor.
-		update_entanglement_visuals()
+			_activate_qubit(1)
+			soundtrack.play_cue("entangled")
+			message.text = "Enlace establecido.\n\nQ1 toma %s y Q2 lo entrega al receptor." % requested_color_name.to_upper()
 		return
-
-	if delivery_pending and active_qubit == 2 and qbit2.global_position.distance_to(delivery_area.global_position) < 48.0:
+	if delivery_pending and active_qubit == 2 and flat_distance(qbit2.position, delivery_area.position) < 1.15:
 		deliver_entangled_color()
 		return
-
 	if not delivery_pending and active_qubit == 1:
 		for pickup in color_pickups:
-			if qbit1.global_position.distance_to(pickup.global_position) < 42.0:
-				var picked_name: String = pickup.get_meta("color_name") as String
-				var picked_color: Color = pickup.get_meta("color_value") as Color
-				apply_entangled_color(picked_name, picked_color)
+			if flat_distance(qbit1.position, pickup.position) < 0.95:
+				var picked: String = str(pickup.get_meta("color_name"))
+				if picked != current_entangled_color_name:
+					apply_entangled_color(picked, pickup.get_meta("color_value") as Color)
 				return
-	update_entanglement_visuals()
 
 func apply_entangled_color(color_name: String, color_value: Color) -> void:
 	if not entangled or delivery_pending:
 		return
-	qbit1_visual.color = color_value
-	qbit2_visual.color = color_value
 	current_entangled_color_name = color_name
 	current_entangled_color_value = color_value
-
+	world.update_marker_color(qbit1_visual, color_value)
+	world.update_marker_color(qbit2_visual, color_value)
 	if color_name == requested_color_name:
 		delivery_pending = true
-		active_qubit = 2
-		message.text = "Ambos qubits cambiaron a %s. Ahora controla el Qubit 2 y llevalo al receptor." % color_name.to_upper()
+		_activate_qubit(2)
+		soundtrack.play_cue("confirm")
+		message.text = "Ambos qubits son %s.\n\nLleva Q2 al receptor para entregar." % color_name.to_upper()
 	else:
-		message.text = "Ese color no era el pedido. Ambos qubits cambiaron, pero el receptor necesita %s." % requested_color_name.to_upper()
-	update_entanglement_visuals()
+		message.text = "El receptor pide %s.\n\nQ1 debe tomar ese color." % requested_color_name.to_upper()
+	update_hud()
 
 func deliver_entangled_color() -> void:
-	if not delivery_pending:
+	if not delivery_pending or current_entangled_color_name != requested_color_name:
 		return
-	if current_entangled_color_name != requested_color_name:
-		delivery_pending = false
-		active_qubit = 1
-		message.text = "Entrega rechazada. Vuelve con Qubit 1 y toma el color correcto: %s." % requested_color_name.to_upper()
-		update_entanglement_visuals()
-		return
-
 	entanglement_round += 1
-	soundtrack.play_cue("victory" if entanglement_round >= 3 else "delivery")
 	delivery_pending = false
+	soundtrack.play_cue("victory" if entanglement_round >= 3 else "delivery")
 	if entanglement_round >= 3:
 		game_over = true
-		restart_button.visible = false
-		menu_button.visible = false
-		message.text = ""
-		show_modal(
-			"MISIÓN CUMPLIDA",
-			"Has escapado del mundo clásico.",
-			"[A] Menú Principal",
-			"to_menu"
-		)
+		show_modal("MISIÓN CUMPLIDA", "Has escapado del mundo clásico.\n\nDominaste la superposición, la medición y el entrelazamiento.", "[A] Menú Principal", "to_menu")
 	else:
-		message.text = "Entrega correcta: %s. Ahora vuelve al Qubit 1 y toma el siguiente color." % current_entangled_color_name.to_upper()
 		start_next_entanglement_round()
-		active_qubit = 1
-		# Regresamos el Qubit 2 a su zona para que cada entrega requiera moverlo de nuevo.
-		qbit2.position = Vector2(960, 360)
-	update_entanglement_visuals()
+		qbit2.position = Vector3(8, 0.85, 0)
+		qbit2.set_look_angles(PI / 2.0)
+		_activate_qubit(1)
+		message.text = "Entrega completa.\n\nAhora Q1 toma %s." % requested_color_name.to_upper()
+	update_hud()
 
 func start_next_entanglement_round() -> void:
 	var names: Array[String] = ["rojo", "azul", "verde"]
-	var values: Array[Color] = [Color(1.0, 0.16, 0.16), Color(0.2, 0.45, 1.0), Color(0.25, 1.0, 0.35)]
-	var idx: int = entanglement_round % names.size()
-	requested_color_name = names[idx]
-	requested_color_value = values[idx]
-	current_entangled_color_name = ""
-	current_entangled_color_value = Color.WHITE
-	update_delivery_visuals()
-
-func update_delivery_visuals() -> void:
-	if delivery_visual == null or delivery_label == null:
-		return
-	delivery_visual.color = Color(requested_color_value.r, requested_color_value.g, requested_color_value.b, 0.75)
-	delivery_label.text = requested_color_name.substr(0, 1).to_upper()
-	delivery_label.add_theme_font_size_override("font_size", 26)
+	var values: Array[Color] = [Color("#ff667c"), Color("#51a8ff"), Color("#6fffc1")]
+	requested_color_name = names[entanglement_round % 3]
+	requested_color_value = values[entanglement_round % 3]
+	world.update_marker_color(delivery_visual, requested_color_value, "RECEPTOR / " + requested_color_name.to_upper())
 
 func update_entanglement_visuals() -> void:
-	if qbit1_visual != null:
-		qbit1_visual.selected = active_qubit == 1
-	if qbit2_visual != null:
-		qbit2_visual.selected = active_qubit == 2
-	if entanglement_link != null:
-		entanglement_link.active = entangled
-		entanglement_link.color = current_entangled_color_value if not current_entangled_color_name.is_empty() else Design.CYAN
-	if entanglement_status_label != null and entangled:
-		var control_text: String = "Qubit %d" % active_qubit
-		if delivery_pending:
-			entanglement_status_label.text = "Control: %s    |    Qubit 2 debe entregar: %s    |    Entregas: %d/3" % [control_text, current_entangled_color_name.to_upper(), entanglement_round]
-		else:
-			entanglement_status_label.text = "Control: %s    |    Receptor pide: %s    |    Qubit 1 toma el color    |    Entregas: %d/3" % [control_text, requested_color_name.to_upper(), entanglement_round]
+	if not is_instance_valid(qbit1_visual):
+		return
+	qbit1_visual.position = qbit1.position - Vector3(0, 0.85, 0)
+	qbit2_visual.position = qbit2.position - Vector3(0, 0.85, 0)
+	qbit1_visual.visible = active_qubit != 1
+	qbit2_visual.visible = active_qubit != 2
+	if entangled:
+		world.draw_link(qbit1.position + Vector3(0, 0.35, 0), qbit2.position + Vector3(0, 0.35, 0), current_entangled_color_value if not current_entangled_color_name.is_empty() else Design.CYAN)
+
+func flat_distance(first: Vector3, second: Vector3) -> float:
+	return Vector2(first.x - second.x, first.z - second.z).length()
+
+func cell_at(at: Vector3) -> Vector2i:
+	return Vector2i(roundi(at.x / CELL), roundi(at.z / CELL))
+
+func is_wall_at(at: Vector3) -> bool:
+	return not is_walkable(cell_at(at))
+
+func is_walkable(cell: Vector2i) -> bool:
+	return cell.y >= 0 and cell.y < maze.size() and cell.x >= 0 and cell.x < maze[cell.y].length() and maze[cell.y].substr(cell.x, 1) != "#"
+
+func nearest_walkable(at: Vector2i) -> Vector2i:
+	if is_walkable(at):
+		return at
+	var closest := Vector2i(1, 1)
+	var distance: int = 1000000
+	for z in range(maze.size()):
+		for x in range(maze[z].length()):
+			var candidate := Vector2i(x, z)
+			var steps: int = absi(at.x - x) + absi(at.y - z)
+			if is_walkable(candidate) and steps < distance:
+				distance = steps
+				closest = candidate
+	return closest
+
+func find_path(start: Vector2i, destination: Vector2i) -> Array[Vector3]:
+	var result: Array[Vector3] = []
+	start = nearest_walkable(start)
+	destination = nearest_walkable(destination)
+	if start == destination:
+		return result
+	var frontier: Array[Vector2i] = [start]
+	var previous: Dictionary = {start: start}
+	var cursor: int = 0
+	while cursor < frontier.size():
+		var current: Vector2i = frontier[cursor]
+		cursor += 1
+		if current == destination:
+			break
+		for offset in [Vector2i.LEFT, Vector2i.RIGHT, Vector2i.UP, Vector2i.DOWN]:
+			var next: Vector2i = current + offset
+			if is_walkable(next) and not previous.has(next):
+				previous[next] = current
+				frontier.append(next)
+	if not previous.has(destination):
+		return result
+	var current: Vector2i = destination
+	while current != start:
+		result.push_front(Vector3(current.x * CELL, 1.3, current.y * CELL))
+		current = previous[current]
+	return result
+
+func update_drone_paths() -> void:
+	if not is_instance_valid(player):
+		return
+	for drone in enemies:
+		if drone.frozen_time <= 0.0:
+			drone.set_path(find_path(cell_at(drone.position), cell_at(player.position)))
 
 func update_hud() -> void:
-	var quantum_text: String = ""
-	if level == 1:
-		quantum_text = "Superposicion bloqueada hasta el nivel 2"
-	elif level == 2:
-		if superposition_active:
-			quantum_text = "Superposicion: ACTIVA sin limite"
-		else:
-			quantum_text = "A: activar/desactivar superposicion"
-	elif level == 3:
-		if superposition_locked:
-			quantum_text = "Estado: COLAPSADO | Ya no puedes reactivar superposicion"
-		elif superposition_active:
-			quantum_text = "Superposicion: ACTIVA | Compuertas M = medicion y colapso"
-		else:
-			quantum_text = "Estado: CLASICO | A: activar superposicion"
-	else:
-		if entangled:
-			var control_text: String = "Qubit %d" % active_qubit
-			if delivery_pending:
-				quantum_text = "Controlando: %s | Receptor espera: %s | Completadas: %d/3" % [control_text, current_entangled_color_name.to_upper(), entanglement_round]
-			else:
-				quantum_text = "Controlando: %s | Receptor espera: %s | Completadas: %d/3" % [control_text, requested_color_name.to_upper(), entanglement_round]
-		else:
-			quantum_text = "Entrelazamiento pendiente | Coloca ambos qubits en las estaciones E"
-	if level == 1:
-		level_title_label.text = "PROTOCOLO 01   /   LABERINTO CLÁSICO"
-	elif level == 2:
-		level_title_label.text = "PROTOCOLO 02   /   SUPERPOSICIÓN"
-	elif level == 3:
-		level_title_label.text = "PROTOCOLO 03   /   MEDICIÓN Y COLAPSO"
-	else:
-		level_title_label.text = "PROTOCOLO 04   /   ENTRELAZAMIENTO"
-	hud_label.text = quantum_text
+	var names: Array[String] = ["LABERINTO CLÁSICO", "SUPERPOSICIÓN", "MEDICIÓN Y COLAPSO", "ENTRELAZAMIENTO"]
+	level_title_label.text = "PROTOCOLO %02d   /   %s" % [level, names[level - 1]]
 	phase_label.text = "%02d / 04" % level
 	if level == 4:
-		field_guide_label.text = "Q1 + Q2\nLleva cada qubit a su estación E.\n\nUna vez enlazados, Q1 toma el color pedido y Q2 lo entrega al receptor.\n\nOBJETIVO\n3 entregas."
-	elif level == 3:
-		field_guide_label.text = "MEDICIÓN / M\nLos escáneres dorados hacen colapsar tu estado.\n\nEvítalos mientras atraviesas muros.\n\nINTENTOS\n%d / 3" % deaths_level_3
-	elif level == 2:
-		field_guide_label.text = "SUPERPOSICIÓN\nA cambia tu estado.\n\nEl halo violeta permite atravesar paredes.\n\nDESTINO\nPortal verde."
+		hud_label.text = "Q%d  |  %s  |  ENTREGAS %d/3" % [active_qubit, "RECEPTOR: " + requested_color_name.to_upper() if entangled else "ENLACE PENDIENTE", entanglement_round]
+		field_guide_label.text = "A · QUBITS\nCambia entre\nQ1 y Q2.\n\nQ1 toma el\ncolor pedido.\nQ2 lo entrega.\n\n%s" % (requested_color_name.to_upper() if entangled else "Ambos a E.")
 	else:
-		field_guide_label.text = "QUBIT\nControlas el núcleo cian.\n\nDRONES\nEvita los núcleos rojos.\n\nINTENTOS\n%d / 3" % deaths_level_1
+		var state: String = "COLAPSADO" if superposition_locked else ("SUPERPOSICIÓN ACTIVA" if superposition_active else "ESTADO CLÁSICO")
+		hud_label.text = "%s  |  DRONES %d" % [state, enemies.size()]
+		field_guide_label.text = "RT · RAYO\nDetiene drones\n3,5 s · 28 m\n\n%s" % ("M · MEDICIÓN\nEvita escáneres\nal atravesar\nmuros." if level == 3 else ("A · ESTADO\nEl halo violeta\npermite cruzar\nlos muros." if level == 2 else "PORTAL VERDE\nTu salida del\nlaboratorio."))
+		if level == 1 or level == 3:
+			field_guide_label.text += "\n\nINTENTOS %d/3" % (deaths_level_1 if level == 1 else deaths_level_3)
 	if game_over:
-		instructions_label.text = "Stick o cruceta: Elegir    A: Aceptar    X: Reiniciar    B / Start: Menu"
+		instructions_label.text = "Stick / Cruceta: Elegir    A: Aceptar    X: Reiniciar    B / Start: Menú"
 	elif level == 4:
-		instructions_label.text = "Stick / Cruceta: Mover    A: Cambiar qubit    B / Start: Menu"
-	elif level == 1:
-		instructions_label.text = "Stick / Cruceta: Mover    B / Start: Menu"
+		instructions_label.text = "Stick izq.: Mover    Stick der.: Mirar    RT: Rayo    A: Cambiar qubit    B / Start: Menú"
+	elif level >= 2:
+		instructions_label.text = "Stick izq.: Mover    Stick der.: Mirar    RT: Rayo    A: Superposición    B / Start: Menú"
 	else:
-		instructions_label.text = "Stick / Cruceta: Mover    A: Superposicion    B / Start: Menu"
+		instructions_label.text = "Stick izq.: Mover    Stick der.: Mirar    RT: Rayo    B / Start: Menú"
+	weapon_label.text = "RAYO DE COHERENCIA · LISTO" if ray_cooldown <= 0.0 else "RECARGA DEL EMISOR · %.1f s" % ray_cooldown
+	weapon_label.add_theme_color_override("font_color", Design.CYAN if ray_cooldown <= 0.0 else Design.GOLD)
+
+func _exit_tree() -> void:
+	Input.mouse_mode = Input.MOUSE_MODE_VISIBLE
