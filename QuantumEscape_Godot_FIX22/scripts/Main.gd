@@ -1,5 +1,11 @@
 extends Node2D
 
+const QuantumSprite = preload("res://scripts/QuantumSprite.gd")
+const QuantumBackdrop = preload("res://scripts/QuantumBackdrop.gd")
+const Design = preload("res://scripts/QuantumTheme.gd")
+const QuantumLink = preload("res://scripts/QuantumLink.gd")
+const QuantumAudio = preload("res://scripts/QuantumAudio.gd")
+
 const SCREEN_SIZE: Vector2 = Vector2(1280, 720)
 const CELL: int = 40
 const OFFSET: Vector2 = Vector2(240, 100)
@@ -30,6 +36,9 @@ var start_button: Button
 var quit_button: Button
 var restart_button: Button
 var menu_button: Button
+var controller_status_label: Label
+var phase_label: Label
+var field_guide_label: Label
 var modal_layer: CanvasLayer
 var modal_title: Label
 var modal_body: Label
@@ -40,8 +49,8 @@ var wall_shapes: Array[CollisionShape2D] = []
 var detector_areas: Array[Area2D] = []
 var qbit1: CharacterBody2D
 var qbit2: CharacterBody2D
-var qbit1_visual: ColorRect
-var qbit2_visual: ColorRect
+var qbit1_visual: QuantumSprite
+var qbit2_visual: QuantumSprite
 var active_qubit: int = 1
 var entangled: bool = false
 var entanglement_round: int = 0
@@ -54,10 +63,13 @@ var color_pickups: Array[Area2D] = []
 var q1_station: Area2D
 var q2_station: Area2D
 var delivery_area: Area2D
-var delivery_visual: ColorRect
+var delivery_visual: QuantumSprite
 var delivery_label: Label
 var entanglement_status_label: Label
 var generated_root: Node2D
+var entanglement_link: QuantumLink
+var soundtrack: QuantumAudio
+var audio_toggle_button: Button
 
 var maze: Array[String] = [
 	"####################",
@@ -76,10 +88,16 @@ var maze: Array[String] = [
 ]
 
 func _ready() -> void:
+	soundtrack = QuantumAudio.new()
+	soundtrack.name = "QuantumAudio"
+	add_child(soundtrack)
 	create_menu()
 	create_hud()
 	create_modal()
+	create_audio_controls()
 	show_menu()
+	Input.joy_connection_changed.connect(_on_joy_connection_changed)
+	update_controller_status()
 
 func _physics_process(delta: float) -> void:
 	if not game_started or game_over or is_modal_open():
@@ -89,163 +107,221 @@ func _physics_process(delta: float) -> void:
 		check_entanglement_level()
 		update_hud()
 		return
-	update_superposition(delta)
 	move_player(delta)
 	move_enemies(delta)
 	check_enemy_collision()
 	update_hud()
 
-func _unhandled_input(event: InputEvent) -> void:
-	if event is InputEventKey and event.pressed and not event.echo:
-		if is_modal_open():
-			if event.keycode == KEY_ENTER or event.keycode == KEY_KP_ENTER:
-				accept_modal()
-			elif event.keycode == KEY_ESCAPE:
-				show_menu()
-			return
+func _input(event: InputEvent) -> void:
+	if event.is_echo():
+		return
+	if event.is_action_pressed("toggle_music"):
+		_toggle_audio()
+		get_viewport().set_input_as_handled()
+		return
 
-		if game_started and level == 4 and event.keycode == KEY_SPACE:
-			handle_entanglement_space()
-			return
-
-		if event.keycode == KEY_F11:
-			var mode := DisplayServer.window_get_mode()
-			if mode == DisplayServer.WINDOW_MODE_FULLSCREEN:
-				DisplayServer.window_set_mode(DisplayServer.WINDOW_MODE_WINDOWED)
-			else:
-				DisplayServer.window_set_mode(DisplayServer.WINDOW_MODE_FULLSCREEN)
-
-		elif event.keycode == KEY_ESCAPE:
-			if game_started:
-				show_menu()
-			else:
-				get_tree().quit()
-
-		elif not game_started:
-			# Truco secreto para presentacion: desde el menu principal,
-			# presiona 1, 2, 3 o 4 para saltar directo a ese nivel.
-			if event.keycode == KEY_1 or event.keycode == KEY_KP_1:
-				start_secret_level(1)
-			elif event.keycode == KEY_2 or event.keycode == KEY_KP_2:
-				start_secret_level(2)
-			elif event.keycode == KEY_3 or event.keycode == KEY_KP_3:
-				start_secret_level(3)
-			elif event.keycode == KEY_4 or event.keycode == KEY_KP_4:
-				start_secret_level(4)
-			elif event.keycode == KEY_DOWN or event.keycode == KEY_S:
-				quit_button.grab_focus()
-			elif event.keycode == KEY_UP or event.keycode == KEY_W:
-				start_button.grab_focus()
-			elif event.keycode == KEY_ENTER or event.keycode == KEY_KP_ENTER:
-				if quit_button.has_focus():
-					_on_quit_pressed()
-				else:
-					_on_start_pressed()
-
-		elif event.keycode == KEY_R:
-			if game_over and not transitioning_to_level_2:
-				_on_restart_pressed()
-		elif event.keycode == KEY_ENTER or event.keycode == KEY_KP_ENTER:
-			if game_over and not transitioning_to_level_2:
-				_on_restart_pressed()
-		elif event.keycode == KEY_M:
+	# Se procesa antes de la GUI: A acepta cuadros o usa la habilidad,
+	# segun el contexto, sin activar tambien un boton con foco.
+	if is_modal_open():
+		if event.is_action_pressed("confirm"):
+			accept_modal()
+		elif event.is_action_pressed("back") or event.is_action_pressed("open_menu"):
 			show_menu()
+		get_viewport().set_input_as_handled()
+		return
+
+	if event is InputEventKey and event.pressed and event.keycode == KEY_F11:
+		var mode := DisplayServer.window_get_mode()
+		if mode == DisplayServer.WINDOW_MODE_FULLSCREEN:
+			DisplayServer.window_set_mode(DisplayServer.WINDOW_MODE_WINDOWED)
+		else:
+			DisplayServer.window_set_mode(DisplayServer.WINDOW_MODE_FULLSCREEN)
+	elif event.is_action_pressed("back"):
+		if game_started:
+			show_menu()
+		else:
+			get_tree().quit()
+	elif event.is_action_pressed("open_menu"):
+		show_menu()
+	elif not game_started:
+		# Truco secreto para presentacion: desde el menu principal,
+		# presiona 1, 2, 3 o 4 para saltar directo a ese nivel.
+		if event is InputEventKey and event.pressed and (event.keycode == KEY_1 or event.keycode == KEY_KP_1):
+			start_secret_level(1)
+		elif event is InputEventKey and event.pressed and (event.keycode == KEY_2 or event.keycode == KEY_KP_2):
+			start_secret_level(2)
+		elif event is InputEventKey and event.pressed and (event.keycode == KEY_3 or event.keycode == KEY_KP_3):
+			start_secret_level(3)
+		elif event is InputEventKey and event.pressed and (event.keycode == KEY_4 or event.keycode == KEY_KP_4):
+			start_secret_level(4)
+		elif event.is_action_pressed("move_down"):
+			quit_button.grab_focus()
+		elif event.is_action_pressed("move_up"):
+			start_button.grab_focus()
+		elif event.is_action_pressed("confirm"):
+			if quit_button.has_focus():
+				_on_quit_pressed()
+			else:
+				_on_start_pressed()
+		else:
+			return
+	elif game_over and not transitioning_to_level_2:
+		if event.is_action_pressed("move_right") or event.is_action_pressed("move_down"):
+			menu_button.grab_focus()
+		elif event.is_action_pressed("move_left") or event.is_action_pressed("move_up"):
+			restart_button.grab_focus()
+		elif event.is_action_pressed("restart"):
+			_on_restart_pressed()
+		elif event.is_action_pressed("confirm"):
+			if menu_button.has_focus():
+				_on_menu_pressed()
+			else:
+				_on_restart_pressed()
+		else:
+			return
+	elif not game_over and event.is_action_pressed("superposition"):
+		if level == 4:
+			handle_entanglement_space()
+		elif level >= 2:
+			toggle_superposition()
+	else:
+		return
+	get_viewport().set_input_as_handled()
+
+func _on_joy_connection_changed(_device: int, _connected: bool) -> void:
+	update_controller_status.call_deferred()
+
+func update_controller_status() -> void:
+	var controllers: Array[int] = Input.get_connected_joypads()
+	if controllers.is_empty():
+		controller_status_label.text = "Mando no detectado. Conecta tu control Xbox por USB."
+	else:
+		controller_status_label.text = "Mando detectado: %s" % Input.get_joy_name(controllers[0])
 
 func create_menu() -> void:
 	menu_layer = CanvasLayer.new()
 	add_child(menu_layer)
 
-	var bg: ColorRect = ColorRect.new()
-	bg.color = Color(0.04, 0.05, 0.10)
-	bg.size = SCREEN_SIZE
+	var bg := QuantumBackdrop.new()
+	bg.mode = "menu"
 	menu_layer.add_child(bg)
 
-	title_label = Label.new()
-	title_label.text = "QUANTUM ESCAPE"
-	title_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	title_label.add_theme_font_size_override("font_size", 54)
-	title_label.position = Vector2(0, 120)
-	title_label.size = Vector2(SCREEN_SIZE.x, 80)
-	menu_layer.add_child(title_label)
+	add_interface_label(menu_layer, "Q / LAB     ·     COMPUTACIÓN CUÁNTICA", Rect2(100, 48, 600, 30), 14, Design.CYAN)
+	add_interface_label(menu_layer, "SISTEMA EN LÍNEA  /  04 PROTOCOLOS", Rect2(794, 48, 386, 30), 12, Design.MUTED, HORIZONTAL_ALIGNMENT_RIGHT)
+	title_label = add_interface_label(menu_layer, "QUANTUM\nESCAPE", Rect2(94, 116, 570, 179), 64, Design.TEXT)
+	var display_font := SystemFont.new()
+	display_font.font_names = PackedStringArray(["Avenir Next", "Arial"])
+	display_font.font_weight = 800
+	title_label.add_theme_font_override("font", display_font)
+	add_interface_label(menu_layer, "Rompe los límites del mundo clásico.\nExplora superposición, medición\ny entrelazamiento.", Rect2(100, 306, 500, 90), 20, Design.MUTED)
 
-	var subtitle: Label = Label.new()
-	subtitle.text = "Un laberinto clasico primero. Una propiedad cuantica despues."
-	subtitle.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	subtitle.add_theme_font_size_override("font_size", 20)
-	subtitle.position = Vector2(160, 210)
-	subtitle.size = Vector2(960, 40)
-	menu_layer.add_child(subtitle)
+	var hero := QuantumSprite.new()
+	hero.position = Vector2(903, 312)
+	hero.radius = 126.0
+	hero.color = Design.CYAN
+	hero.selected = true
+	menu_layer.add_child(hero)
+	add_interface_label(menu_layer, "REGISTRO CUÁNTICO  /  |ψ⟩", Rect2(708, 114, 390, 28), 14, Design.CYAN, HORIZONTAL_ALIGNMENT_CENTER)
+	add_interface_label(menu_layer, "|0⟩", Rect2(875, 152, 56, 28), 20, Design.TEXT, HORIZONTAL_ALIGNMENT_CENTER)
+	add_interface_label(menu_layer, "|1⟩", Rect2(875, 455, 56, 28), 20, Design.TEXT, HORIZONTAL_ALIGNMENT_CENTER)
+	add_interface_label(menu_layer, "|ψ⟩ = α |0⟩ + β |1⟩", Rect2(698, 499, 410, 40), 22, Design.VIOLET, HORIZONTAL_ALIGNMENT_CENTER)
+	add_interface_label(menu_layer, "01  CLÁSICO      02  SUPERPOSICIÓN\n03  MEDICIÓN    04  ENTRELAZAMIENTO", Rect2(693, 558, 430, 52), 13, Design.MUTED, HORIZONTAL_ALIGNMENT_CENTER)
 
 	start_button = Button.new()
-	start_button.text = "Iniciar juego"
-	start_button.position = Vector2(520, 310)
-	start_button.size = Vector2(240, 58)
+	start_button.text = "INICIAR EXPERIMENTO    →"
+	start_button.position = Vector2(100, 414)
+	start_button.size = Vector2(330, 56)
+	Design.style_button(start_button, true)
 	start_button.pressed.connect(_on_start_pressed)
 	menu_layer.add_child(start_button)
 	start_button.focus_mode = Control.FOCUS_ALL
 
 	quit_button = Button.new()
 	quit_button.text = "Salir"
-	quit_button.position = Vector2(520, 390)
-	quit_button.size = Vector2(240, 58)
+	quit_button.position = Vector2(100, 484)
+	quit_button.size = Vector2(330, 46)
+	Design.style_button(quit_button)
 	quit_button.pressed.connect(_on_quit_pressed)
 	menu_layer.add_child(quit_button)
 	quit_button.focus_mode = Control.FOCUS_ALL
 
-	var controls: Label = Label.new()
-	controls.text = "WASD o Flechas: Elegir    ENTER: Aceptar    ESC: Salir"
-	controls.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	controls.add_theme_font_size_override("font_size", 18)
-	controls.position = Vector2(0, 635)
-	controls.size = Vector2(SCREEN_SIZE.x, 40)
-	menu_layer.add_child(controls)
+	Design.create_panel(menu_layer, Rect2(64, 642, 1152, 52))
+	add_interface_label(menu_layer, "XBOX   Stick / Cruceta: elegir · A: aceptar · B: salir", Rect2(86, 657, 1108, 28), 14, Design.MUTED, HORIZONTAL_ALIGNMENT_CENTER)
+	controller_status_label = add_interface_label(menu_layer, "", Rect2(100, 553, 510, 55), 14, Design.MUTED)
+	controller_status_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 
 	start_button.grab_focus()
 
+func add_interface_label(parent: Node, text: String, rect: Rect2, font_size: int, color: Color, alignment: HorizontalAlignment = HORIZONTAL_ALIGNMENT_LEFT) -> Label:
+	var label := Label.new()
+	label.text = text
+	label.position = rect.position
+	label.size = rect.size
+	label.horizontal_alignment = alignment
+	label.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	Design.style_label(label, font_size, color)
+	parent.add_child(label)
+	return label
+
+func create_audio_controls() -> void:
+	var audio_controls := CanvasLayer.new()
+	audio_controls.layer = 3
+	add_child(audio_controls)
+	audio_toggle_button = Button.new()
+	audio_toggle_button.name = "AudioToggle"
+	audio_toggle_button.text = "Sonido: ON · Y"
+	audio_toggle_button.position = Vector2(86, 654)
+	audio_toggle_button.size = Vector2(158, 34)
+	audio_toggle_button.focus_mode = Control.FOCUS_NONE
+	Design.style_button(audio_toggle_button)
+	audio_toggle_button.add_theme_font_size_override("font_size", 13)
+	audio_toggle_button.pressed.connect(_toggle_audio)
+	audio_controls.add_child(audio_toggle_button)
+
+func _toggle_audio() -> void:
+	soundtrack.set_muted(not soundtrack.muted)
+	audio_toggle_button.text = "Sonido: OFF · Y" if soundtrack.muted else "Sonido: ON · Y"
+
 func create_hud() -> void:
 	hud = CanvasLayer.new()
+	hud.layer = 2
 	add_child(hud)
 
-	level_title_label = Label.new()
-	level_title_label.position = Vector2(0, 8)
-	level_title_label.size = Vector2(SCREEN_SIZE.x, 36)
-	level_title_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	level_title_label.add_theme_font_size_override("font_size", 25)
-	hud.add_child(level_title_label)
+	Design.create_panel(hud, Rect2(56, 16, 1168, 64))
+	level_title_label = add_interface_label(hud, "", Rect2(80, 26, 485, 28), 18, Design.TEXT)
+	add_interface_label(hud, "QUANTUM ESCAPE   /   ESTADO DEL SISTEMA", Rect2(82, 54, 480, 18), 10, Design.MUTED)
+	hud_label = add_interface_label(hud, "", Rect2(571, 29, 630, 40), 14, Design.CYAN, HORIZONTAL_ALIGNMENT_RIGHT)
+	hud_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 
-	hud_label = Label.new()
-	hud_label.position = Vector2(0, 44)
-	hud_label.size = Vector2(SCREEN_SIZE.x, 30)
-	hud_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	hud_label.add_theme_font_size_override("font_size", 18)
-	hud.add_child(hud_label)
+	Design.create_panel(hud, Rect2(20, 122, 164, 390), Design.VIOLET)
+	add_interface_label(hud, "PROTOCOLO ACTIVO", Rect2(36, 140, 133, 25), 11, Design.MUTED)
+	phase_label = add_interface_label(hud, "01 / 04", Rect2(36, 167, 136, 38), 25, Design.VIOLET)
+	message = add_interface_label(hud, "", Rect2(36, 224, 132, 273), 15, Design.TEXT)
+	message.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 
-	message = Label.new()
-	message.position = Vector2(0, 74)
-	message.size = Vector2(SCREEN_SIZE.x, 86)
-	message.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	message.add_theme_font_size_override("font_size", 20)
-	hud.add_child(message)
-
-	instructions_label = Label.new()
-	instructions_label.position = Vector2(0, 670)
-	instructions_label.size = Vector2(SCREEN_SIZE.x, 36)
-	instructions_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	instructions_label.add_theme_font_size_override("font_size", 18)
-	hud.add_child(instructions_label)
+	Design.create_panel(hud, Rect2(1100, 122, 160, 390))
+	add_interface_label(hud, "GUÍA DE CAMPO", Rect2(1116, 140, 130, 24), 11, Design.CYAN)
+	field_guide_label = add_interface_label(hud, "", Rect2(1116, 183, 128, 315), 14, Design.MUTED)
+	field_guide_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	Design.create_panel(hud, Rect2(36, 649, 1208, 49))
+	instructions_label = add_interface_label(hud, "", Rect2(52, 663, 1176, 26), 14, Design.MUTED, HORIZONTAL_ALIGNMENT_CENTER)
 
 	restart_button = Button.new()
-	restart_button.text = "Reiniciar"
-	restart_button.position = Vector2(490, 585)
-	restart_button.size = Vector2(140, 45)
+	restart_button.text = "Reiniciar (X)"
+	restart_button.position = Vector2(20, 530)
+	restart_button.size = Vector2(164, 44)
+	Design.style_button(restart_button, true)
+	restart_button.add_theme_font_size_override("font_size", 16)
 	restart_button.pressed.connect(_on_restart_pressed)
 	hud.add_child(restart_button)
 	restart_button.focus_mode = Control.FOCUS_ALL
 
 	menu_button = Button.new()
-	menu_button.text = "Menu"
-	menu_button.position = Vector2(650, 585)
-	menu_button.size = Vector2(140, 45)
+	menu_button.text = "Menu (B)"
+	menu_button.position = Vector2(20, 586)
+	menu_button.size = Vector2(164, 44)
+	Design.style_button(menu_button)
+	menu_button.add_theme_font_size_override("font_size", 16)
 	menu_button.pressed.connect(_on_menu_pressed)
 	hud.add_child(menu_button)
 	menu_button.focus_mode = Control.FOCUS_ALL
@@ -259,44 +335,32 @@ func create_modal() -> void:
 
 	var shade: ColorRect = ColorRect.new()
 	shade.name = "ModalShade"
-	shade.color = Color(0, 0, 0, 0.68)
+	shade.color = Color(0.01, 0.025, 0.06, 0.88)
 	shade.size = SCREEN_SIZE
 	modal_layer.add_child(shade)
 
-	var panel: Panel = Panel.new()
+	var panel: Panel = Design.create_panel(modal_layer, Rect2(290, 145, 700, 430), Design.VIOLET)
 	panel.name = "ModalPanel"
-	panel.position = Vector2(315, 145)
-	panel.size = Vector2(650, 430)
-	modal_layer.add_child(panel)
-
-	modal_title = Label.new()
-	modal_title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	modal_title.add_theme_font_size_override("font_size", 34)
-	modal_title.position = Vector2(25, 28)
-	modal_title.size = Vector2(600, 52)
-	panel.add_child(modal_title)
+	add_interface_label(panel, "TRANSMISIÓN CUÁNTICA   /   Q-LAB", Rect2(34, 21, 630, 22), 11, Design.VIOLET)
+	var emblem := QuantumSprite.new()
+	emblem.radius = 22.0
+	emblem.position = Vector2(57, 73)
+	emblem.color = Design.VIOLET
+	panel.add_child(emblem)
+	modal_title = add_interface_label(panel, "", Rect2(94, 52, 573, 50), 32, Design.TEXT)
 
 	var line: ColorRect = ColorRect.new()
-	line.color = Color(0.2, 0.8, 1.0, 0.9)
-	line.position = Vector2(45, 92)
-	line.size = Vector2(560, 3)
+	line.color = Color(Design.CYAN, 0.35)
+	line.position = Vector2(34, 112)
+	line.size = Vector2(632, 1)
+	line.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	panel.add_child(line)
 
-	modal_body = Label.new()
-	modal_body.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	modal_body = add_interface_label(panel, "", Rect2(45, 132, 610, 193), 21, Design.TEXT, HORIZONTAL_ALIGNMENT_CENTER)
 	modal_body.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
 	modal_body.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-	modal_body.add_theme_font_size_override("font_size", 24)
-	modal_body.position = Vector2(55, 120)
-	modal_body.size = Vector2(540, 210)
-	panel.add_child(modal_body)
-
-	modal_action = Label.new()
-	modal_action.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	modal_action.add_theme_font_size_override("font_size", 22)
-	modal_action.position = Vector2(25, 350)
-	modal_action.size = Vector2(600, 45)
-	panel.add_child(modal_action)
+	Design.create_panel(panel, Rect2(34, 348, 632, 50))
+	modal_action = add_interface_label(panel, "", Rect2(44, 361, 612, 30), 18, Design.CYAN, HORIZONTAL_ALIGNMENT_CENTER)
 
 	modal_layer.visible = false
 
@@ -304,17 +368,22 @@ func is_modal_open() -> bool:
 	return modal_layer != null and modal_layer.visible
 
 func show_modal(title: String, body: String, action: String, mode: String) -> void:
+	soundtrack.set_scene("modal")
 	modal_mode = mode
 	modal_title.text = title
 	modal_body.text = body
 	modal_action.text = action
 	modal_layer.visible = true
+	var focused_control: Control = get_viewport().gui_get_focus_owner()
+	if focused_control != null:
+		focused_control.release_focus()
 
 func hide_modal() -> void:
 	modal_layer.visible = false
 	modal_mode = ""
 
 func accept_modal() -> void:
+	soundtrack.play_cue("confirm")
 	var mode: String = modal_mode
 	hide_modal()
 	if mode == "to_level_2":
@@ -332,6 +401,7 @@ func accept_modal() -> void:
 
 
 func show_menu() -> void:
+	soundtrack.set_scene("menu")
 	if modal_layer != null:
 		hide_modal()
 	game_started = false
@@ -357,6 +427,7 @@ func start_secret_level(target_level: int) -> void:
 	build_level(target_level)
 
 func _on_start_pressed() -> void:
+	soundtrack.play_cue("confirm")
 	menu_layer.visible = false
 	hud.visible = true
 	game_started = true
@@ -369,16 +440,19 @@ func _on_quit_pressed() -> void:
 	get_tree().quit()
 
 func _on_restart_pressed() -> void:
+	soundtrack.play_cue("confirm")
 	transitioning_to_level_2 = false
 	build_level(level)
 
 func _on_menu_pressed() -> void:
+	soundtrack.play_cue("confirm")
 	show_menu()
 
 func build_level(new_level: int) -> void:
 	if modal_layer != null:
 		hide_modal()
 	level = new_level
+	soundtrack.set_scene("entanglement" if level == 4 else ("quantum" if level >= 2 else "classic"))
 	game_over = false
 	transitioning_to_level_2 = false
 	superposition_active = false
@@ -397,9 +471,11 @@ func build_level(new_level: int) -> void:
 		create_detectors()
 	create_enemies()
 	if level == 2:
-		message.text = "Nivel 2: presiona ESPACIO para activar/desactivar superposicion"
+		message.text = "Nivel 2: presiona A para activar/desactivar superposicion"
 	elif level == 3:
 		message.text = "Nivel 3: evita las compuertas M en paredes y caminos. Si te miden, colapsas."
+	else:
+		message.text = "Encuentra el portal verde.\n\nEvita a los drones rojos: en el mundo clásico no puedes atravesar los muros."
 	update_hud()
 
 func clear_old_level() -> void:
@@ -433,12 +509,16 @@ func clear_old_level() -> void:
 	delivery_visual = null
 	delivery_label = null
 	entanglement_status_label = null
+	entanglement_link = null
 
 func create_background() -> void:
-	var bg: ColorRect = ColorRect.new()
+	var bg := QuantumBackdrop.new()
 	bg.name = "GeneratedBackground"
-	bg.color = Color(0.05, 0.07, 0.12)
-	bg.size = SCREEN_SIZE
+	bg.mode = "entanglement" if level == 4 else "maze"
+	bg.maze = maze
+	bg.board_offset = OFFSET
+	bg.cell_size = CELL
+	bg.accent = Design.VIOLET if level == 3 else Design.CYAN
 	generated_root.add_child(bg)
 	generated_root.move_child(bg, 0)
 
@@ -459,13 +539,7 @@ func create_walls_and_positions() -> void:
 				create_exit(pos)
 
 func create_wall(pos: Vector2) -> void:
-	var rect: ColorRect = ColorRect.new()
-	rect.name = "GeneratedWallVisual"
-	rect.color = Color(0.19, 0.35, 0.62)
-	rect.position = pos - Vector2(CELL / 2, CELL / 2)
-	rect.size = Vector2(CELL, CELL)
-	generated_root.add_child(rect)
-
+	# The backdrop draws the circuit tiles; collision still occupies each cell.
 	var shape: CollisionShape2D = CollisionShape2D.new()
 	var box: RectangleShape2D = RectangleShape2D.new()
 	box.size = Vector2(CELL, CELL)
@@ -486,11 +560,11 @@ func create_player(pos: Vector2) -> void:
 	player_shape.shape = circle
 	player.add_child(player_shape)
 
-	var sprite: ColorRect = ColorRect.new()
+	var sprite := QuantumSprite.new()
 	sprite.name = "PlayerVisual"
-	sprite.color = Color(0.2, 0.95, 1.0)
-	sprite.size = Vector2(26, 26)
-	sprite.position = Vector2(-13, -13)
+	sprite.color = Design.CYAN
+	sprite.radius = 13.0
+	player.z_index = 10
 	player.add_child(sprite)
 
 func create_exit(pos: Vector2) -> void:
@@ -505,10 +579,10 @@ func create_exit(pos: Vector2) -> void:
 	shape.shape = box
 	exit_area.add_child(shape)
 
-	var visual: ColorRect = ColorRect.new()
-	visual.color = Color(0.45, 1.0, 0.35)
-	visual.size = Vector2(28, 28)
-	visual.position = Vector2(-14, -14)
+	var visual := QuantumSprite.new()
+	visual.kind = "exit"
+	visual.color = Color("#6fffc1")
+	visual.radius = 15.0
 	exit_area.add_child(visual)
 	exit_area.body_entered.connect(_on_exit_entered)
 
@@ -527,10 +601,11 @@ func create_enemies() -> void:
 		shape.shape = circle
 		e.add_child(shape)
 
-		var visual: ColorRect = ColorRect.new()
-		visual.color = Color(1.0, 0.18, 0.22)
-		visual.size = Vector2(28, 28)
-		visual.position = Vector2(-14, -14)
+		var visual := QuantumSprite.new()
+		visual.kind = "enemy"
+		visual.color = Color("#ff6b83")
+		visual.radius = 14.0
+		e.z_index = 9
 		e.add_child(visual)
 		enemies.append(e)
 
@@ -575,24 +650,18 @@ func create_detector(cell: Vector2, in_wall: bool) -> void:
 	shape.shape = box
 	detector.add_child(shape)
 
-	var visual: ColorRect = ColorRect.new()
+	var visual := QuantumSprite.new()
 	visual.name = "DetectorVisual"
-	visual.color = Color(1.0, 0.86, 0.15, 0.72)
-	visual.size = Vector2(40, 40)
-	visual.position = Vector2(-20, -20)
+	visual.kind = "detector"
+	visual.color = Design.GOLD
+	visual.radius = 19.0
 	detector.add_child(visual)
-
-	var inner: ColorRect = ColorRect.new()
-	inner.color = Color(0.19, 0.35, 0.62, 0.95) if in_wall else Color(0.05, 0.07, 0.12, 0.95)
-	inner.size = Vector2(26, 26)
-	inner.position = Vector2(-13, -13)
-	detector.add_child(inner)
 
 	var label: Label = Label.new()
 	label.text = "M"
 	label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
-	label.add_theme_font_size_override("font_size", 21)
+	Design.style_label(label, 12, Design.GOLD)
 	label.position = Vector2(-20, -20)
 	label.size = Vector2(40, 40)
 	detector.add_child(label)
@@ -601,10 +670,8 @@ func create_detector(cell: Vector2, in_wall: bool) -> void:
 	detector_areas.append(detector)
 
 func move_player(delta: float) -> void:
-	var input_vector: Vector2 = Vector2.ZERO
-	input_vector.x = Input.get_action_strength("move_right") - Input.get_action_strength("move_left")
-	input_vector.y = Input.get_action_strength("move_down") - Input.get_action_strength("move_up")
-	player.velocity = input_vector.normalized() * PLAYER_SPEED
+	var input_vector: Vector2 = Input.get_vector("move_left", "move_right", "move_up", "move_down")
+	player.velocity = input_vector * PLAYER_SPEED
 
 	if superposition_active:
 		player.position += player.velocity * delta
@@ -617,33 +684,31 @@ func move_enemies(_delta: float) -> void:
 		e.velocity = direction * ENEMY_SPEED
 		e.move_and_slide()
 
-func update_superposition(_delta: float) -> void:
-	if level >= 2 and Input.is_action_just_pressed("superposition"):
-		if level == 3 and superposition_locked:
-			message.text = "Tu estado ya colapso por una medicion. No puedes volver a activar la superposicion en este intento."
-			return
+func toggle_superposition() -> void:
+	if level == 3 and superposition_locked:
+		message.text = "Tu estado ya colapso por una medicion. No puedes volver a activar la superposicion en este intento."
+		return
 
-		superposition_active = not superposition_active
-		set_player_superposition_visual(superposition_active)
-		if superposition_active:
-			if level == 3:
-				message.text = "Superposicion activa. Cuidado: si una compuerta M te mide, colapsas definitivamente."
-			else:
-				message.text = "Superposicion activa: puedes atravesar paredes sin limite de tiempo"
+	superposition_active = not superposition_active
+	soundtrack.play_cue("superposition_on" if superposition_active else "superposition_off")
+	set_player_superposition_visual(superposition_active)
+	if superposition_active:
+		if level == 3:
+			message.text = "Superposicion activa. Cuidado: si una compuerta M te mide, colapsas definitivamente."
 		else:
-			message.text = "Superposicion desactivada"
+			message.text = "Superposicion activa: puedes atravesar paredes sin limite de tiempo"
+	else:
+		message.text = "Superposicion desactivada"
 
 func set_player_superposition_visual(active: bool) -> void:
 	# Importante: no apagamos las paredes.
 	# El jugador atraviesa porque en move_player se mueve por posicion,
 	# pero los enemigos siguen usando move_and_slide y chocan con el laberinto.
 	if player != null:
-		var player_visual: ColorRect = player.get_node("PlayerVisual") as ColorRect
+		var player_visual: QuantumSprite = player.get_node("PlayerVisual") as QuantumSprite
 		if player_visual != null:
-			if active:
-				player_visual.modulate = Color(1, 1, 1, 0.35)
-			else:
-				player_visual.modulate = Color(1, 1, 1, 1)
+			player_visual.superposed = active
+			player_visual.color = Design.VIOLET if active else Design.CYAN
 
 func check_enemy_collision() -> void:
 	for e in enemies:
@@ -654,6 +719,7 @@ func check_enemy_collision() -> void:
 func die() -> void:
 	if game_over or transitioning_to_level_2:
 		return
+	soundtrack.play_cue("caught")
 
 	if level == 1:
 		deaths_level_1 += 1
@@ -686,7 +752,7 @@ func start_quantum_transition() -> void:
 	show_modal(
 		"¡INTERESANTE!",
 		"¿Ves? No es tan facil encontrar la salida cuando estas limitado a una unica posicion.\n\nAhora probemos una propiedad cuantica: la SUPERPOSICION.",
-		"[ENTER] Continuar al Nivel 2",
+		"[A] Continuar al Nivel 2",
 		"to_level_2"
 	)
 
@@ -698,17 +764,18 @@ func start_final_game_over() -> void:
 	show_modal(
 		"FIN DEL JUEGO",
 		"Llegaste al tercer intento del nivel de medicion.\n\nLa superposicion es poderosa, pero al ser medida colapsa y ya no puede usarse en ese intento.",
-		"[ENTER] Volver al Menu Principal",
+		"[A] Volver al Menu Principal",
 		"to_menu"
 	)
 
 func _on_exit_entered(body: Node2D) -> void:
 	if body != player or game_over:
 		return
+	soundtrack.play_cue("confirm")
 	if level == 1:
 		deaths_level_1 = 0
 		build_level(2)
-		message.text = "Nivel 2: presiona ESPACIO para activar/desactivar superposicion"
+		message.text = "Nivel 2: presiona A para activar/desactivar superposicion"
 	elif level == 2:
 		game_over = true
 		restart_button.visible = false
@@ -717,7 +784,7 @@ func _on_exit_entered(body: Node2D) -> void:
 		show_modal(
 			"NUEVO CONCEPTO",
 			"Ya usaste la superposicion para atravesar paredes.\n\nAhora veras que al medir un sistema cuantico, su superposicion puede colapsar.",
-			"[ENTER] Continuar al Nivel 3",
+			"[A] Continuar al Nivel 3",
 			"to_level_3"
 		)
 	elif level == 3:
@@ -728,7 +795,7 @@ func _on_exit_entered(body: Node2D) -> void:
 		show_modal(
 			"NUEVO CONCEPTO",
 			"Completaste el nivel de medicion y colapso.\n\nAhora veremos el ENTRELAZAMIENTO: dos qubits compartiran un mismo estado, de modo que cambiar uno afectara al otro.",
-			"[ENTER] Continuar al Nivel 4",
+			"[A] Continuar al Nivel 4",
 			"to_level_4"
 		)
 
@@ -740,6 +807,7 @@ func _on_detector_entered(body: Node2D, detector: Area2D) -> void:
 	# Si ya colapso antes, tocar otra compuerta M no debe reiniciar el nivel.
 	if not superposition_active:
 		return
+	soundtrack.play_cue("collapse")
 
 	var in_wall: bool = detector.get_meta("in_wall") as bool
 	superposition_active = false
@@ -764,7 +832,7 @@ func handle_wall_collapse() -> void:
 	show_modal(
 		"ATRAPADO",
 		"Colapsaste dentro del muro.\nReinicia el nivel.\nIntento %d de 3." % deaths_level_3,
-		"[ENTER] Reiniciar",
+		"[A] Reiniciar",
 		"restart_level"
 	)
 
@@ -779,7 +847,7 @@ func create_entanglement_level() -> void:
 	delivery_pending = false
 	current_entangled_color_name = ""
 	current_entangled_color_value = Color.WHITE
-	message.text = "Nivel 4: cambia de qubit con ESPACIO. Acerca ambos a las estaciones E del centro."
+	message.text = "Nivel 4: cambia de qubit con A. Acerca ambos a las estaciones E del centro."
 
 	# Marco exterior
 	create_entanglement_wall(Vector2(640, 90), Vector2(880, 24))
@@ -795,13 +863,18 @@ func create_entanglement_level() -> void:
 	q1_station = create_entanglement_pad(Vector2(585, 360), Color(0.2, 0.8, 1.0, 0.65), "E")
 	q2_station = create_entanglement_pad(Vector2(695, 360), Color(0.7, 0.3, 1.0, 0.65), "E")
 
-	qbit1 = create_qubit(Vector2(320, 360), Color(0.2, 0.95, 1.0), "1")
-	qbit2 = create_qubit(Vector2(960, 360), Color(0.7, 0.3, 1.0), "2")
+	qbit1 = create_qubit(Vector2(320, 360), Design.CYAN, "1")
+	qbit2 = create_qubit(Vector2(960, 360), Design.VIOLET, "2")
+	entanglement_link = QuantumLink.new()
+	entanglement_link.first = qbit1
+	entanglement_link.second = qbit2
+	entanglement_link.z_index = 3
+	generated_root.add_child(entanglement_link)
 
 	delivery_area = create_entanglement_pad(Vector2(960, 510), Color(1.0, 0.9, 0.25, 0.55), "R")
-	delivery_visual = delivery_area.get_node("PadVisual") as ColorRect
+	delivery_visual = delivery_area.get_node("PadVisual") as QuantumSprite
 	delivery_label = delivery_area.get_node("PadLabel") as Label
-	create_entanglement_label("Receptor", Vector2(900, 555), 18)
+	create_entanglement_label("RECEPTOR", Vector2(895, 553), 13)
 
 	create_color_pickup(Vector2(330, 220), "rojo", Color(1.0, 0.16, 0.16))
 	create_color_pickup(Vector2(330, 360), "azul", Color(0.2, 0.45, 1.0))
@@ -811,20 +884,26 @@ func create_entanglement_level() -> void:
 	update_entanglement_visuals()
 
 func create_entanglement_wall(center: Vector2, size: Vector2) -> void:
-	var wall: ColorRect = ColorRect.new()
+	var wall := Panel.new()
 	wall.name = "GeneratedEntanglementWall"
-	wall.color = Color(0.19, 0.35, 0.62)
 	wall.position = center - size / 2
 	wall.size = size
+	wall.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	var style: StyleBoxFlat = Design.panel_style(Design.CYAN, Color("#193449"))
+	style.set_corner_radius_all(3)
+	style.shadow_size = 0
+	style.border_color = Color(Design.CYAN, 0.45)
+	wall.add_theme_stylebox_override("panel", style)
 	generated_root.add_child(wall)
 
 func create_entanglement_label(text: String, pos: Vector2, font_size: int) -> Label:
 	var label: Label = Label.new()
 	label.text = text
 	label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	label.add_theme_font_size_override("font_size", font_size)
+	Design.style_label(label, font_size, Design.MUTED)
 	label.position = pos
-	label.size = Vector2(260, 32)
+	label.size = Vector2(130, 30)
+	label.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	generated_root.add_child(label)
 	return label
 
@@ -839,11 +918,11 @@ func create_entanglement_pad(pos: Vector2, color: Color, label_text: String) -> 
 	shape.shape = box
 	area.add_child(shape)
 
-	var visual: ColorRect = ColorRect.new()
+	var visual := QuantumSprite.new()
 	visual.name = "PadVisual"
+	visual.kind = "pad"
 	visual.color = color
-	visual.size = Vector2(58, 58)
-	visual.position = Vector2(-29, -29)
+	visual.radius = 29.0
 	area.add_child(visual)
 
 	var label: Label = Label.new()
@@ -851,7 +930,7 @@ func create_entanglement_pad(pos: Vector2, color: Color, label_text: String) -> 
 	label.text = label_text
 	label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
-	label.add_theme_font_size_override("font_size", 24)
+	Design.style_label(label, 18, Design.TEXT)
 	label.position = Vector2(-29, -29)
 	label.size = Vector2(58, 58)
 	area.add_child(label)
@@ -868,21 +947,21 @@ func create_qubit(pos: Vector2, color: Color, label_text: String) -> CharacterBo
 	shape.shape = circle
 	q.add_child(shape)
 
-	var visual: ColorRect = ColorRect.new()
+	var visual := QuantumSprite.new()
 	visual.name = "QubitVisual"
 	visual.color = color
-	visual.size = Vector2(36, 36)
-	visual.position = Vector2(-18, -18)
+	visual.radius = 18.0
+	q.z_index = 10
 	q.add_child(visual)
 
 	var label: Label = Label.new()
 	label.name = "PadLabel"
-	label.text = label_text
+	label.text = "Q" + label_text
 	label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
-	label.add_theme_font_size_override("font_size", 18)
-	label.position = Vector2(-18, -18)
-	label.size = Vector2(36, 36)
+	Design.style_label(label, 12, Design.TEXT)
+	label.position = Vector2(-22, -42)
+	label.size = Vector2(44, 20)
 	q.add_child(label)
 
 	if label_text == "1":
@@ -904,24 +983,25 @@ func create_color_pickup(pos: Vector2, color_name: String, color_value: Color) -
 	shape.shape = box
 	area.add_child(shape)
 
-	var visual: ColorRect = ColorRect.new()
+	var visual := QuantumSprite.new()
 	visual.name = "PadVisual"
+	visual.kind = "pad"
 	visual.color = color_value
-	visual.size = Vector2(54, 54)
-	visual.position = Vector2(-27, -27)
+	visual.radius = 27.0
 	area.add_child(visual)
 
 	var label: Label = Label.new()
 	label.text = color_name.substr(0, 1).to_upper()
 	label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
-	label.add_theme_font_size_override("font_size", 22)
+	Design.style_label(label, 17, Design.TEXT)
 	label.position = Vector2(-27, -27)
 	label.size = Vector2(54, 54)
 	area.add_child(label)
 	color_pickups.append(area)
 
 func handle_entanglement_space() -> void:
+	soundtrack.play_cue("switch")
 	active_qubit = 2 if active_qubit == 1 else 1
 	if entangled:
 		if delivery_pending and active_qubit == 2:
@@ -935,10 +1015,8 @@ func handle_entanglement_space() -> void:
 	update_entanglement_visuals()
 
 func move_entanglement_qubits(delta: float) -> void:
-	var input_vector: Vector2 = Vector2.ZERO
-	input_vector.x = Input.get_action_strength("move_right") - Input.get_action_strength("move_left")
-	input_vector.y = Input.get_action_strength("move_down") - Input.get_action_strength("move_up")
-	var movement: Vector2 = input_vector.normalized() * PLAYER_SPEED * delta
+	var input_vector: Vector2 = Input.get_vector("move_left", "move_right", "move_up", "move_down")
+	var movement: Vector2 = input_vector * PLAYER_SPEED * delta
 	if movement == Vector2.ZERO:
 		return
 
@@ -963,6 +1041,7 @@ func check_entanglement_level() -> void:
 		var q2_ready: bool = qbit2.global_position.distance_to(q2_station.global_position) < 36.0
 		if q1_ready and q2_ready:
 			entangled = true
+			soundtrack.play_cue("entangled")
 			active_qubit = 1
 			start_next_entanglement_round()
 			message.text = "⚡ Entrelazamiento establecido. Ahora toma con el Qubit 1 el color que pide el receptor."
@@ -1015,6 +1094,7 @@ func deliver_entangled_color() -> void:
 		return
 
 	entanglement_round += 1
+	soundtrack.play_cue("victory" if entanglement_round >= 3 else "delivery")
 	delivery_pending = false
 	if entanglement_round >= 3:
 		game_over = true
@@ -1024,7 +1104,7 @@ func deliver_entangled_color() -> void:
 		show_modal(
 			"MISIÓN CUMPLIDA",
 			"Has escapado del mundo clásico.",
-			"[ENTER] Menú Principal",
+			"[A] Menú Principal",
 			"to_menu"
 		)
 	else:
@@ -1054,9 +1134,12 @@ func update_delivery_visuals() -> void:
 
 func update_entanglement_visuals() -> void:
 	if qbit1_visual != null:
-		qbit1_visual.scale = Vector2(1.25, 1.25) if active_qubit == 1 else Vector2(1.0, 1.0)
+		qbit1_visual.selected = active_qubit == 1
 	if qbit2_visual != null:
-		qbit2_visual.scale = Vector2(1.25, 1.25) if active_qubit == 2 else Vector2(1.0, 1.0)
+		qbit2_visual.selected = active_qubit == 2
+	if entanglement_link != null:
+		entanglement_link.active = entangled
+		entanglement_link.color = current_entangled_color_value if not current_entangled_color_name.is_empty() else Design.CYAN
 	if entanglement_status_label != null and entangled:
 		var control_text: String = "Qubit %d" % active_qubit
 		if delivery_pending:
@@ -1072,14 +1155,14 @@ func update_hud() -> void:
 		if superposition_active:
 			quantum_text = "Superposicion: ACTIVA sin limite"
 		else:
-			quantum_text = "ESPACIO: activar/desactivar superposicion"
+			quantum_text = "A: activar/desactivar superposicion"
 	elif level == 3:
 		if superposition_locked:
 			quantum_text = "Estado: COLAPSADO | Ya no puedes reactivar superposicion"
 		elif superposition_active:
 			quantum_text = "Superposicion: ACTIVA | Compuertas M = medicion y colapso"
 		else:
-			quantum_text = "Estado: CLASICO | ESPACIO: activar superposicion"
+			quantum_text = "Estado: CLASICO | A: activar superposicion"
 	else:
 		if entangled:
 			var control_text: String = "Qubit %d" % active_qubit
@@ -1090,15 +1173,28 @@ func update_hud() -> void:
 		else:
 			quantum_text = "Entrelazamiento pendiente | Coloca ambos qubits en las estaciones E"
 	if level == 1:
-		level_title_label.text = "Nivel: 1 \"Laberinto sin superposicion\""
+		level_title_label.text = "PROTOCOLO 01   /   LABERINTO CLÁSICO"
 	elif level == 2:
-		level_title_label.text = "Nivel: 2 \"Laberinto con superposicion\""
+		level_title_label.text = "PROTOCOLO 02   /   SUPERPOSICIÓN"
 	elif level == 3:
-		level_title_label.text = "Nivel: 3 \"Medicion y colapso\""
+		level_title_label.text = "PROTOCOLO 03   /   MEDICIÓN Y COLAPSO"
 	else:
-		level_title_label.text = "Nivel 4: Entrelazamiento cuantico"
+		level_title_label.text = "PROTOCOLO 04   /   ENTRELAZAMIENTO"
 	hud_label.text = quantum_text
+	phase_label.text = "%02d / 04" % level
 	if level == 4:
-		instructions_label.text = "WASD: Moverte    ESPACIO: Cambiar qubit controlado"
+		field_guide_label.text = "Q1 + Q2\nLleva cada qubit a su estación E.\n\nUna vez enlazados, Q1 toma el color pedido y Q2 lo entrega al receptor.\n\nOBJETIVO\n3 entregas."
+	elif level == 3:
+		field_guide_label.text = "MEDICIÓN / M\nLos escáneres dorados hacen colapsar tu estado.\n\nEvítalos mientras atraviesas muros.\n\nINTENTOS\n%d / 3" % deaths_level_3
+	elif level == 2:
+		field_guide_label.text = "SUPERPOSICIÓN\nA cambia tu estado.\n\nEl halo violeta permite atravesar paredes.\n\nDESTINO\nPortal verde."
 	else:
-		instructions_label.text = "WASD: Moverte    ESPACIO: Activar/Desactivar Superposición"
+		field_guide_label.text = "QUBIT\nControlas el núcleo cian.\n\nDRONES\nEvita los núcleos rojos.\n\nINTENTOS\n%d / 3" % deaths_level_1
+	if game_over:
+		instructions_label.text = "Stick o cruceta: Elegir    A: Aceptar    X: Reiniciar    B / Start: Menu"
+	elif level == 4:
+		instructions_label.text = "Stick / Cruceta: Mover    A: Cambiar qubit    B / Start: Menu"
+	elif level == 1:
+		instructions_label.text = "Stick / Cruceta: Mover    B / Start: Menu"
+	else:
+		instructions_label.text = "Stick / Cruceta: Mover    A: Superposicion    B / Start: Menu"
