@@ -1,58 +1,45 @@
 # Quantum Escape 3D
 
-**Videojuego educativo en primera persona sobre computación cuántica.**
+Un laboratorio cuántico para explorar en primera persona con teclado y ratón. Congela drones con tu rayo, atraviesa muros en superposición y conecta dos qubits para entregar colores.
 
-Explora un laboratorio futurista, inmoviliza drones con un rayo de coherencia y resuelve desafíos de superposición, medición y entrelazamiento.
+**[Abrir la demo web](https://oscarlopcamp.github.io/Quantum-Escape/)**
 
-## Probar el sistema en línea
+La demostración funciona en el navegador, sin base de datos y sin instalar Godot.
 
-**[Visitar la demostración de Quantum Escape](https://oscarlopcamp.github.io/Quantum-Escape/)**
+## Empieza a jugar
 
-Puedes visitar la página para conocer y probar el funcionamiento del sistema directamente desde tu navegador. La demostración funciona **sin base de datos** y no requiere instalar Godot.
+El menú ofrece **Iniciar juego**, **Tutorial corto** y **Salir**. Puedes entrar directamente al primer nivel o practicar cuatro acciones en un entrenamiento opcional: moverte, mirar, congelar un dron y usar superposición para llegar al portal. El entrenamiento no tiene castigos ni límite de tiempo.
 
-## Versión actual: 3D en primera persona
+| Acción | Control |
+| --- | --- |
+| Moverte / elegir opciones | WASD o flechas |
+| Mirar y apuntar | Ratón |
+| Disparar | Clic izquierdo |
+| Superposición / cambiar de qubit | Espacio |
+| Confirmar | Enter o clic |
+| Reiniciar después de fallar | R |
+| Silenciar o activar sonido | M |
+| Pausar | Esc |
 
-El proyecto de Godot incluye cuatro niveles, un escenario 3D y una cámara en primera persona. Su escena inicial es `Main3D.tscn` y el menú ofrece **Iniciar en 3D**.
+Al cambiar de pestaña o perder el foco, la partida se pausa. **Enter** o clic en **Continuar** captura de nuevo el ratón; **Esc** desde la pausa vuelve al menú.
 
-![Laboratorio cuántico en primera persona](QuantumEscape_Godot_FIX22/previews/laberinto.png)
-
-## Características
-
-- Laboratorio con circuitos luminosos, interfaz holográfica y paleta cian/violeta.
-- Emisor cuántico, mira y radar.
-- Rayo de coherencia que congela drones durante **3,5 segundos**; alcance de 28 metros y recarga de 0,65 segundos.
-- Superposición para atravesar muros y escáneres de medición que provocan colapso.
-- Dos qubits entrelazados: Q1 recoge el color solicitado y Q2 lo entrega al receptor.
-- Música electrónica original y efectos de sonido.
-- Controles para mando Xbox, incluido movimiento y apuntado con ambos sticks.
-
-## Los cuatro niveles
+## Cuatro desafíos cuánticos
 
 1. **Laberinto clásico:** alcanza el portal verde y evita a los drones.
 2. **Superposición:** cambia de estado para atravesar los muros.
-3. **Medición y colapso:** evita los escáneres M mientras estás en superposición.
-4. **Entrelazamiento:** enlaza Q1 y Q2 en sus estaciones E y completa tres entregas de colores.
+3. **Medición:** evita los escáneres M mientras estás en superposición.
+4. **Entrelazamiento:** enlaza Q1 y Q2 en las estaciones E y completa tres entregas de colores.
 
-## Ejecutar el proyecto en Godot
+El rayo inmoviliza drones durante **3,5 segundos**. Los circuitos de neón, la paleta cian/violeta, el qubit animado y la música electrónica acompañan el recorrido.
 
-1. Abre [QuantumEscape_Godot_FIX22/project.godot](QuantumEscape_Godot_FIX22/project.godot) con Godot 4.7.
-2. Pulsa **Ejecutar proyecto**.
-3. Selecciona **Iniciar en 3D**.
+![Laboratorio cuántico en primera persona](QuantumEscape_Godot_FIX22/previews/laberinto.png)
 
-| Acción | Control Xbox |
-| --- | --- |
-| Moverte | Stick izquierdo |
-| Mirar y apuntar | Stick derecho |
-| Disparar el rayo | RT |
-| Superposición o cambiar de qubit | A |
-| Volver al menú | B o Menu/Start |
-| Reiniciar después de morir | X |
-| Activar o silenciar el sonido | Y |
+[Ver el menú](QuantumEscape_Godot_FIX22/previews/menu.png) · [Ver el tutorial](QuantumEscape_Godot_FIX22/previews/tutorial.png) · [Ver entrelazamiento](QuantumEscape_Godot_FIX22/previews/entrelazamiento.png)
 
-Los pasos de conexión por USB-C en Mac están en el [README del proyecto](QuantumEscape_Godot_FIX22/README.md).
+## Abrir o exportar el proyecto
 
-## Tecnologías
+Abre [project.godot](QuantumEscape_Godot_FIX22/project.godot) con Godot 4.7 y pulsa **Ejecutar proyecto** o **F5**.
 
-- Godot Engine 4.7
-- GDScript
-- HTML5 / WebAssembly para la demostración web
+La exportación web utiliza **Compatibility**, con threads desactivados. El preset **Web** escribe en `docs/index.html`; los detalles están en el [README del proyecto](QuantumEscape_Godot_FIX22/README.md).
+
+Si aparece una versión antigua o un aviso de configuración que se repite, recarga con **Ctrl+Shift+R** en PC o **Cmd+Shift+R** en Mac. Si persiste, borra los datos del sitio y vuelve a abrir la demo. Recargar reinicia la partida.

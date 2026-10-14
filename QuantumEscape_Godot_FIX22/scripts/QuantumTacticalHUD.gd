@@ -29,7 +29,7 @@ func _draw() -> void:
 	var card := Rect2(1046, 474, 210, 153)
 	draw_style_box(Design.panel_style(), card)
 	var font: Font = ThemeDB.fallback_font
-	draw_string(font, Vector2(1064, 497), "RADAR CUÁNTICO", HORIZONTAL_ALIGNMENT_LEFT, -1, 11, Design.CYAN)
+	draw_string(font, Vector2(1064, 497), "RADAR CUANTICO", HORIZONTAL_ALIGNMENT_LEFT, -1, 11, Design.CYAN)
 	var player: Node3D = game.get("player") as Node3D
 	if not is_instance_valid(player):
 		return

@@ -1,5 +1,7 @@
 extends CharacterBody3D
 
+signal mouse_capture_lost
+
 const WALK_SPEED: float = 4.6
 const LOOK_SPEED: float = 1.9
 const MOUSE_SENSITIVITY: float = 0.0025
@@ -25,6 +27,7 @@ var _shot_time: float = 0.0
 var _clock: float = 0.0
 var _gravity: float = 15.0
 var _emitter_home := Vector3(0.34, -0.27, -0.6)
+var _had_mouse_capture: bool = false
 
 
 func _ready() -> void:
@@ -59,7 +62,44 @@ func set_enabled(value: bool) -> void:
 		velocity = Vector3.ZERO
 	if is_instance_valid(camera):
 		camera.current = value
-	Input.mouse_mode = Input.MOUSE_MODE_CAPTURED if value else Input.MOUSE_MODE_VISIBLE
+	_had_mouse_capture = value and Input.mouse_mode == Input.MOUSE_MODE_CAPTURED
+
+
+func request_mouse_capture() -> bool:
+	# Web pointer lock must be requested directly from a pressed input callback.
+	if not enabled:
+		return false
+	if Input.mouse_mode != Input.MOUSE_MODE_CAPTURED:
+		Input.mouse_mode = Input.MOUSE_MODE_CAPTURED
+	_had_mouse_capture = Input.mouse_mode == Input.MOUSE_MODE_CAPTURED
+	return _had_mouse_capture
+
+
+func release_mouse_capture() -> void:
+	# Explicit releases accompany menus; only unexpected losses emit the signal.
+	_had_mouse_capture = false
+	velocity = Vector3.ZERO
+	Input.mouse_mode = Input.MOUSE_MODE_VISIBLE
+
+
+func _check_mouse_capture() -> void:
+	if not enabled:
+		_had_mouse_capture = false
+		return
+	if Input.mouse_mode == Input.MOUSE_MODE_CAPTURED:
+		_had_mouse_capture = true
+	elif _had_mouse_capture:
+		_had_mouse_capture = false
+		velocity = Vector3.ZERO
+		mouse_capture_lost.emit()
+
+
+func _notification(what: int) -> void:
+	if what == NOTIFICATION_WM_WINDOW_FOCUS_OUT and enabled:
+		var was_captured: bool = _had_mouse_capture or Input.mouse_mode == Input.MOUSE_MODE_CAPTURED
+		release_mouse_capture()
+		if was_captured:
+			mouse_capture_lost.emit()
 
 
 func set_look_angles(yaw: float, pitch: float = 0.0) -> void:
@@ -70,9 +110,9 @@ func set_look_angles(yaw: float, pitch: float = 0.0) -> void:
 
 func _unhandled_input(event: InputEvent) -> void:
 	if enabled and Input.mouse_mode == Input.MOUSE_MODE_CAPTURED and event is InputEventMouseMotion:
-		rotation.y -= event.relative.x * MOUSE_SENSITIVITY
+		rotation.y -= event.screen_relative.x * MOUSE_SENSITIVITY
 		_pitch_pivot.rotation.x = clampf(
-			_pitch_pivot.rotation.x - event.relative.y * MOUSE_SENSITIVITY,
+			_pitch_pivot.rotation.x - event.screen_relative.y * MOUSE_SENSITIVITY,
 			-MAX_PITCH, MAX_PITCH
 		)
 
@@ -82,7 +122,9 @@ func _physics_process(delta: float) -> void:
 
 
 func move_step(delta: float) -> void:
-	if not enabled:
+	_check_mouse_capture()
+	if not enabled or Input.mouse_mode != Input.MOUSE_MODE_CAPTURED:
+		velocity = Vector3.ZERO
 		return
 	var look := Input.get_vector("look_left", "look_right", "look_up", "look_down")
 	rotation.y -= look.x * LOOK_SPEED * delta
@@ -131,6 +173,7 @@ func animate_shot() -> void:
 
 
 func _process(delta: float) -> void:
+	_check_mouse_capture()
 	if not is_instance_valid(_emitter):
 		return
 	if enabled:

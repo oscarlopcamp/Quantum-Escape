@@ -8,6 +8,7 @@ const QuantumWorld = preload("res://scripts/QuantumWorld3D.gd")
 const QuantumPlayer = preload("res://scripts/QuantumPlayer3D.gd")
 const QuantumDrone = preload("res://scripts/QuantumDrone3D.gd")
 const TacticalHUD = preload("res://scripts/QuantumTacticalHUD.gd")
+const Tutorial = preload("res://scripts/QuantumTutorial.gd")
 const SCREEN_SIZE := Vector2(1280, 720)
 const CELL: float = 3.0
 const FREEZE_SECONDS: float = 3.5
@@ -72,14 +73,32 @@ var audio_toggle_button: Button
 var tactical_hud: TacticalHUD
 var weapon_label: Label
 var phase_overlay: ColorRect
+var tutorial_button: Button
+var tutorial_active: bool = false
+var tutorial: Tutorial
+var tutorial_panel: Panel
+var tutorial_title_label: Label
+var tutorial_body_label: Label
+var tutorial_controls_label: Label
+var pause_layer: CanvasLayer
+var pause_resume_button: Button
+var modal_accept_button: Button
+var modal_menu_button: Button
+var _fire_suppressed_until_release: bool = false
 
-var maze: Array[String] = [
+const STANDARD_MAZE: Array[String] = [
 	"####################", "#P     #        #  #", "# ### ### ####### ##",
 	"#   #     #        #", "### ##### # ###### #", "#     #   #   #    #",
 	"# ### # ##### # ####", "# #   #     # #    #", "# # ####### # #### #",
 	"# #       # #    # #", "# ####### # #### # #", "#       #        #E#",
 	"####################"
 ]
+
+const PRACTICE_MAZE: Array[String] = [
+	"#########", "#       #", "#P      #", "#       #",
+	"#   ##  #", "#      E#", "#########"
+]
+var maze: Array[String] = STANDARD_MAZE.duplicate()
 
 func _ready() -> void:
 	soundtrack = QuantumAudio.new()
@@ -88,19 +107,32 @@ func _ready() -> void:
 	create_menu()
 	create_hud()
 	create_modal()
+	create_pause()
 	create_audio_controls()
 	adapt_fps_interface()
 	show_menu()
-	Input.joy_connection_changed.connect(_on_joy_connection_changed)
-	update_controller_status()
 
 func _physics_process(delta: float) -> void:
-	if not game_started or game_over or is_modal_open():
+	if not game_started or game_over or is_modal_open() or is_paused():
 		return
+	# Pointer lock is asynchronous in browsers. Wait without moving enemies.
+	var controlling: bool = Input.mouse_mode == Input.MOUSE_MODE_CAPTURED
+	for drone in enemies:
+		drone.enabled = controlling
+		if not controlling:
+			drone.velocity = Vector3.ZERO
+	if not controlling:
+		return
+	if not Input.is_action_pressed("fire"):
+		_fire_suppressed_until_release = false
 	ray_cooldown = maxf(0.0, ray_cooldown - delta)
-	if Input.is_action_pressed("fire") and ray_cooldown <= 0.0:
+	if Input.is_action_pressed("fire") and not _fire_suppressed_until_release and ray_cooldown <= 0.0:
 		shoot_ray()
-	if level == 4:
+	if tutorial_active:
+		tutorial.tick(delta)
+		if tutorial.complete:
+			finish_tutorial()
+	elif level == 4:
 		check_entanglement_level()
 		update_entanglement_visuals()
 	else:
@@ -124,53 +156,48 @@ func _input(event: InputEvent) -> void:
 		_toggle_audio()
 		get_viewport().set_input_as_handled()
 		return
-
-	# Se procesa antes de la GUI: A acepta cuadros o usa la habilidad,
-	# segun el contexto, sin activar tambien un boton con foco.
 	if is_modal_open():
-		if event.is_action_pressed("confirm"):
+		if event.is_action_pressed("confirm") or (modal_mode == "restart_level" and event.is_action_pressed("restart")):
 			accept_modal()
 		elif event.is_action_pressed("back") or event.is_action_pressed("open_menu"):
 			show_menu()
-		get_viewport().set_input_as_handled()
-		return
-
-	if event is InputEventKey and event.pressed and event.keycode == KEY_F11:
-		var mode := DisplayServer.window_get_mode()
-		if mode == DisplayServer.WINDOW_MODE_FULLSCREEN:
-			DisplayServer.window_set_mode(DisplayServer.WINDOW_MODE_WINDOWED)
-		else:
-			DisplayServer.window_set_mode(DisplayServer.WINDOW_MODE_FULLSCREEN)
-	elif event.is_action_pressed("back"):
-		if game_started:
-			show_menu()
-		else:
-			get_tree().quit()
-	elif event.is_action_pressed("open_menu"):
-		show_menu()
-	elif not game_started:
-		# Truco secreto para presentacion: desde el menu principal,
-		# presiona 1, 2, 3 o 4 para saltar directo a ese nivel.
-		if event is InputEventKey and event.pressed and (event.keycode == KEY_1 or event.keycode == KEY_KP_1):
-			start_secret_level(1)
-		elif event is InputEventKey and event.pressed and (event.keycode == KEY_2 or event.keycode == KEY_KP_2):
-			start_secret_level(2)
-		elif event is InputEventKey and event.pressed and (event.keycode == KEY_3 or event.keycode == KEY_KP_3):
-			start_secret_level(3)
-		elif event is InputEventKey and event.pressed and (event.keycode == KEY_4 or event.keycode == KEY_KP_4):
-			start_secret_level(4)
-		elif event.is_action_pressed("move_down"):
-			quit_button.grab_focus()
-		elif event.is_action_pressed("move_up"):
-			start_button.grab_focus()
-		elif event.is_action_pressed("confirm"):
-			if quit_button.has_focus():
-				_on_quit_pressed()
-			else:
-				_on_start_pressed()
 		else:
 			return
-	elif game_over and not transitioning_to_level_2:
+		get_viewport().set_input_as_handled()
+		return
+	if is_paused():
+		if event.is_action_pressed("confirm"):
+			_resume_gameplay()
+		elif event.is_action_pressed("back") or event.is_action_pressed("open_menu"):
+			show_menu()
+		else:
+			return
+		get_viewport().set_input_as_handled()
+		return
+	if event is InputEventKey and event.pressed and event.keycode == KEY_F11:
+		var mode := DisplayServer.window_get_mode()
+		DisplayServer.window_set_mode(DisplayServer.WINDOW_MODE_WINDOWED if mode == DisplayServer.WINDOW_MODE_FULLSCREEN else DisplayServer.WINDOW_MODE_FULLSCREEN)
+	elif event.is_action_pressed("back") or event.is_action_pressed("open_menu"):
+		if game_started:
+			if game_over:
+				show_menu()
+			else:
+				_pause_gameplay()
+		else:
+			return
+	elif not game_started:
+		if event is InputEventKey and event.pressed and event.keycode in [KEY_1, KEY_2, KEY_3, KEY_4]:
+			start_secret_level(int(event.keycode - KEY_0))
+			_capture_after_gesture()
+		elif event.is_action_pressed("move_down") or event.is_action_pressed("move_right"):
+			_move_menu_focus(1)
+		elif event.is_action_pressed("move_up") or event.is_action_pressed("move_left"):
+			_move_menu_focus(-1)
+		elif event.is_action_pressed("confirm"):
+			_activate_menu_selection()
+		else:
+			return
+	elif game_over:
 		if event.is_action_pressed("move_right") or event.is_action_pressed("move_down"):
 			menu_button.grab_focus()
 		elif event.is_action_pressed("move_left") or event.is_action_pressed("move_up"):
@@ -184,8 +211,10 @@ func _input(event: InputEvent) -> void:
 				_on_restart_pressed()
 		else:
 			return
-	elif not game_over and event.is_action_pressed("superposition"):
-		if level == 4:
+	elif event is InputEventMouseButton and event.pressed and event.button_index == MOUSE_BUTTON_LEFT and Input.mouse_mode != Input.MOUSE_MODE_CAPTURED:
+		_capture_after_gesture()
+	elif event.is_action_pressed("superposition"):
+		if level == 4 and not tutorial_active:
 			handle_entanglement_space()
 		elif level >= 2:
 			toggle_superposition()
@@ -193,68 +222,51 @@ func _input(event: InputEvent) -> void:
 		return
 	get_viewport().set_input_as_handled()
 
-func _on_joy_connection_changed(_device: int, _connected: bool) -> void:
-	update_controller_status.call_deferred()
+func _move_menu_focus(direction: int) -> void:
+	var buttons: Array[Button] = [start_button, tutorial_button, quit_button]
+	var selected: int = buttons.find(get_viewport().gui_get_focus_owner())
+	buttons[posmod(selected + direction, buttons.size())].grab_focus()
 
-func update_controller_status() -> void:
-	var controllers: Array[int] = Input.get_connected_joypads()
-	if controllers.is_empty():
-		controller_status_label.text = "Mando no detectado. Conecta tu control Xbox por USB."
+func _activate_menu_selection() -> void:
+	if tutorial_button.has_focus():
+		start_tutorial()
+	elif quit_button.has_focus():
+		_on_quit_pressed()
 	else:
-		controller_status_label.text = "Mando detectado: %s" % Input.get_joy_name(controllers[0])
+		_on_start_pressed()
 
 func create_menu() -> void:
 	menu_layer = CanvasLayer.new()
 	add_child(menu_layer)
-
 	var bg := QuantumBackdrop.new()
 	bg.mode = "menu"
 	menu_layer.add_child(bg)
-
-	add_interface_label(menu_layer, "Q / LAB     ·     COMPUTACIÓN CUÁNTICA", Rect2(100, 48, 600, 30), 14, Design.CYAN)
-	add_interface_label(menu_layer, "VERSIÓN 3D  /  04 PROTOCOLOS", Rect2(794, 48, 386, 30), 12, Design.MUTED, HORIZONTAL_ALIGNMENT_RIGHT)
+	add_interface_label(menu_layer, "Q / LAB  -  COMPUTACION CUANTICA", Rect2(100, 48, 600, 30), 14, Design.CYAN)
+	add_interface_label(menu_layer, "COMPUTADORA Y WEB  /  4 NIVELES", Rect2(794, 48, 386, 30), 12, Design.MUTED, HORIZONTAL_ALIGNMENT_RIGHT)
 	title_label = add_interface_label(menu_layer, "QUANTUM\nESCAPE", Rect2(94, 116, 570, 179), 64, Design.TEXT)
-	var display_font := SystemFont.new()
-	display_font.font_names = PackedStringArray(["Avenir Next", "Arial"])
-	display_font.font_weight = 800
-	title_label.add_theme_font_override("font", display_font)
-	add_interface_label(menu_layer, "Entra al laboratorio en primera persona.\nInmoviliza drones con tu rayo\ny rompe los límites del mundo clásico.", Rect2(100, 306, 500, 90), 20, Design.MUTED)
-
+	# Use the bundled Godot font instead of fonts installed on one computer.
+	title_label.add_theme_font_override("font", ThemeDB.fallback_font)
+	add_interface_label(menu_layer, "Escapa de un laboratorio cuantico.\nCongela drones, atraviesa muros\ny conecta dos qubits para encontrar la salida.", Rect2(100, 306, 540, 82), 20, Design.MUTED)
 	var hero := QuantumSprite.new()
 	hero.position = Vector2(903, 312)
 	hero.radius = 126.0
 	hero.color = Design.CYAN
 	hero.selected = true
 	menu_layer.add_child(hero)
-	add_interface_label(menu_layer, "REGISTRO CUÁNTICO  /  |ψ⟩", Rect2(708, 114, 390, 28), 14, Design.CYAN, HORIZONTAL_ALIGNMENT_CENTER)
-	add_interface_label(menu_layer, "|0⟩", Rect2(875, 152, 56, 28), 20, Design.TEXT, HORIZONTAL_ALIGNMENT_CENTER)
-	add_interface_label(menu_layer, "|1⟩", Rect2(875, 455, 56, 28), 20, Design.TEXT, HORIZONTAL_ALIGNMENT_CENTER)
-	add_interface_label(menu_layer, "|ψ⟩ = α |0⟩ + β |1⟩", Rect2(698, 499, 410, 40), 22, Design.VIOLET, HORIZONTAL_ALIGNMENT_CENTER)
-	add_interface_label(menu_layer, "01  CLÁSICO      02  SUPERPOSICIÓN\n03  MEDICIÓN    04  ENTRELAZAMIENTO", Rect2(693, 558, 430, 52), 13, Design.MUTED, HORIZONTAL_ALIGNMENT_CENTER)
-
-	start_button = Button.new()
-	start_button.text = "INICIAR EN 3D    →"
-	start_button.position = Vector2(100, 414)
-	start_button.size = Vector2(330, 56)
-	Design.style_button(start_button, true)
+	add_interface_label(menu_layer, "ESTADO CUANTICO  /  QUBIT", Rect2(708, 114, 390, 28), 14, Design.CYAN, HORIZONTAL_ALIGNMENT_CENTER)
+	add_interface_label(menu_layer, "0", Rect2(875, 152, 56, 28), 20, Design.TEXT, HORIZONTAL_ALIGNMENT_CENTER)
+	add_interface_label(menu_layer, "1", Rect2(875, 455, 56, 28), 20, Design.TEXT, HORIZONTAL_ALIGNMENT_CENTER)
+	add_interface_label(menu_layer, "Dos estados. Muchas posibilidades.", Rect2(683, 499, 440, 40), 21, Design.VIOLET, HORIZONTAL_ALIGNMENT_CENTER)
+	add_interface_label(menu_layer, "01 CLASICO  /  02 SUPERPOSICION\n03 MEDICION  /  04 ENTRELAZAMIENTO", Rect2(693, 558, 430, 52), 13, Design.MUTED, HORIZONTAL_ALIGNMENT_CENTER)
+	start_button = _create_menu_button("Iniciar juego", Vector2(100, 400), Vector2(330, 52), true)
 	start_button.pressed.connect(_on_start_pressed)
-	menu_layer.add_child(start_button)
-	start_button.focus_mode = Control.FOCUS_ALL
-
-	quit_button = Button.new()
-	quit_button.text = "Salir"
-	quit_button.position = Vector2(100, 484)
-	quit_button.size = Vector2(330, 46)
-	Design.style_button(quit_button)
+	tutorial_button = _create_menu_button("Tutorial corto", Vector2(100, 468), Vector2(330, 48))
+	tutorial_button.pressed.connect(start_tutorial)
+	quit_button = _create_menu_button("Salir", Vector2(100, 532), Vector2(330, 44))
 	quit_button.pressed.connect(_on_quit_pressed)
-	menu_layer.add_child(quit_button)
-	quit_button.focus_mode = Control.FOCUS_ALL
-
+	controller_status_label = add_interface_label(menu_layer, "Primera vez? Prueba el tutorial. Es opcional.", Rect2(100, 591, 520, 29), 14, Design.MUTED)
 	Design.create_panel(menu_layer, Rect2(64, 642, 1152, 52))
-	add_interface_label(menu_layer, "XBOX   Stick / Cruceta: elegir · A: aceptar · B: salir", Rect2(86, 657, 1108, 28), 14, Design.MUTED, HORIZONTAL_ALIGNMENT_CENTER)
-	controller_status_label = add_interface_label(menu_layer, "", Rect2(100, 553, 510, 55), 14, Design.MUTED)
-	controller_status_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-
+	add_interface_label(menu_layer, "Flechas o WASD: elegir  |  Enter: aceptar  |  Clic: seleccionar", Rect2(285, 657, 890, 28), 13, Design.MUTED, HORIZONTAL_ALIGNMENT_CENTER)
 	start_button.grab_focus()
 
 func add_interface_label(parent: Node, text: String, rect: Rect2, font_size: int, color: Color, alignment: HorizontalAlignment = HORIZONTAL_ALIGNMENT_LEFT) -> Label:
@@ -274,7 +286,7 @@ func create_audio_controls() -> void:
 	add_child(audio_controls)
 	audio_toggle_button = Button.new()
 	audio_toggle_button.name = "AudioToggle"
-	audio_toggle_button.text = "Sonido: ON · Y"
+	audio_toggle_button.text = "Sonido: ON (M)"
 	audio_toggle_button.position = Vector2(86, 654)
 	audio_toggle_button.size = Vector2(158, 34)
 	audio_toggle_button.focus_mode = Control.FOCUS_NONE
@@ -285,7 +297,7 @@ func create_audio_controls() -> void:
 
 func _toggle_audio() -> void:
 	soundtrack.set_muted(not soundtrack.muted)
-	audio_toggle_button.text = "Sonido: OFF · Y" if soundtrack.muted else "Sonido: ON · Y"
+	audio_toggle_button.text = "Sonido: OFF (M)" if soundtrack.muted else "Sonido: ON (M)"
 
 func create_hud() -> void:
 	hud = CanvasLayer.new()
@@ -312,7 +324,7 @@ func create_hud() -> void:
 	instructions_label = add_interface_label(hud, "", Rect2(52, 663, 1176, 26), 14, Design.MUTED, HORIZONTAL_ALIGNMENT_CENTER)
 
 	restart_button = Button.new()
-	restart_button.text = "Reiniciar (X)"
+	restart_button.text = "Reiniciar (R)"
 	restart_button.position = Vector2(20, 530)
 	restart_button.size = Vector2(164, 44)
 	Design.style_button(restart_button, true)
@@ -320,9 +332,10 @@ func create_hud() -> void:
 	restart_button.pressed.connect(_on_restart_pressed)
 	hud.add_child(restart_button)
 	restart_button.focus_mode = Control.FOCUS_ALL
+	restart_button.action_mode = BaseButton.ACTION_MODE_BUTTON_PRESS
 
 	menu_button = Button.new()
-	menu_button.text = "Menu (B)"
+	menu_button.text = "Menu (Esc)"
 	menu_button.position = Vector2(20, 586)
 	menu_button.size = Vector2(164, 44)
 	Design.style_button(menu_button)
@@ -330,6 +343,7 @@ func create_hud() -> void:
 	menu_button.pressed.connect(_on_menu_pressed)
 	hud.add_child(menu_button)
 	menu_button.focus_mode = Control.FOCUS_ALL
+	menu_button.action_mode = BaseButton.ACTION_MODE_BUTTON_PRESS
 
 	hud.visible = false
 
@@ -364,8 +378,25 @@ func create_modal() -> void:
 	modal_body = add_interface_label(panel, "", Rect2(45, 132, 610, 193), 21, Design.TEXT, HORIZONTAL_ALIGNMENT_CENTER)
 	modal_body.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
 	modal_body.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-	Design.create_panel(panel, Rect2(34, 348, 632, 50))
 	modal_action = add_interface_label(panel, "", Rect2(44, 361, 612, 30), 18, Design.CYAN, HORIZONTAL_ALIGNMENT_CENTER)
+	modal_action.visible = false
+	modal_accept_button = Button.new()
+	modal_accept_button.position = Vector2(34, 338)
+	modal_accept_button.size = Vector2(632, 50)
+	modal_accept_button.action_mode = BaseButton.ACTION_MODE_BUTTON_PRESS
+	Design.style_button(modal_accept_button, true)
+	modal_accept_button.pressed.connect(accept_modal)
+	panel.add_child(modal_accept_button)
+	modal_menu_button = Button.new()
+	modal_menu_button.text = "Menu principal (Esc)"
+	modal_menu_button.position = Vector2(196, 397)
+	modal_menu_button.size = Vector2(308, 28)
+	modal_menu_button.action_mode = BaseButton.ACTION_MODE_BUTTON_PRESS
+	Design.style_button(modal_menu_button)
+	modal_menu_button.add_theme_font_size_override("font_size", 13)
+	modal_menu_button.pressed.connect(show_menu)
+	panel.add_child(modal_menu_button)
+	modal_menu_button.visible = false
 
 	modal_layer.visible = false
 
@@ -390,31 +421,40 @@ func adapt_fps_interface() -> void:
 	tactical_hud = TacticalHUD.new()
 	tactical_hud.game = self
 	hud.add_child(tactical_hud)
-	weapon_label = add_interface_label(hud, "RAYO DE COHERENCIA · LISTO", Rect2(375, 594, 530, 29), 14, Design.CYAN, HORIZONTAL_ALIGNMENT_CENTER)
+	weapon_label = add_interface_label(hud, "RAYO DE COHERENCIA - LISTO", Rect2(375, 594, 530, 29), 14, Design.CYAN, HORIZONTAL_ALIGNMENT_CENTER)
 	instructions_label.add_theme_font_size_override("font_size", 13)
+	tutorial_panel = Design.create_panel(hud, Rect2(270, 509, 710, 126), Design.VIOLET)
+	tutorial_title_label = add_interface_label(tutorial_panel, "", Rect2(20, 11, 675, 24), 15, Design.CYAN)
+	tutorial_body_label = add_interface_label(tutorial_panel, "", Rect2(20, 38, 675, 45), 17, Design.TEXT)
+	tutorial_controls_label = add_interface_label(tutorial_panel, "", Rect2(20, 91, 675, 24), 13, Design.VIOLET)
+	tutorial_panel.visible = false
 
 func is_modal_open() -> bool:
 	return modal_layer != null and modal_layer.visible
 
-func _set_gameplay_enabled(value: bool) -> void:
+func _set_gameplay_enabled(value: bool, release_pointer: bool = true) -> void:
 	if is_instance_valid(qbit1):
 		qbit1.set_enabled(false)
 	if is_instance_valid(qbit2):
 		qbit2.set_enabled(false)
 	if is_instance_valid(player):
 		player.set_enabled(value)
-		# Keep the paused scene behind dialogs while releasing the pointer.
 		if not value:
 			player.camera.current = true
+			if release_pointer:
+				player.release_mouse_capture()
+	elif not value and release_pointer:
+		Input.mouse_mode = Input.MOUSE_MODE_VISIBLE
 	for drone in enemies:
-		drone.enabled = value
+		drone.enabled = value and Input.mouse_mode == Input.MOUSE_MODE_CAPTURED
 		if not value:
 			drone.velocity = Vector3.ZERO
 	if tactical_hud != null:
 		tactical_hud.visible = value
 	if weapon_label != null:
-		weapon_label.visible = value
-	Input.mouse_mode = Input.MOUSE_MODE_CAPTURED if value else Input.MOUSE_MODE_VISIBLE
+		weapon_label.visible = value and not tutorial_active
+	if tutorial_panel != null:
+		tutorial_panel.visible = value and tutorial_active
 
 func show_modal(title: String, body: String, action: String, mode: String) -> void:
 	soundtrack.set_scene("modal")
@@ -422,11 +462,11 @@ func show_modal(title: String, body: String, action: String, mode: String) -> vo
 	modal_title.text = title
 	modal_body.text = body
 	modal_action.text = action
+	modal_accept_button.text = action
+	modal_menu_button.visible = mode == "tutorial_done"
 	modal_layer.visible = true
 	_set_gameplay_enabled(false)
-	var focused_control := get_viewport().gui_get_focus_owner()
-	if focused_control != null:
-		focused_control.release_focus()
+	modal_accept_button.grab_focus()
 
 func hide_modal() -> void:
 	modal_layer.visible = false
@@ -445,15 +485,24 @@ func accept_modal() -> void:
 		build_level(4)
 	elif mode == "restart_level":
 		build_level(level)
+	elif mode == "tutorial_done":
+		start_secret_level(1)
 	else:
 		show_menu()
+	if game_started and not game_over:
+		_capture_after_gesture()
 
 func show_menu() -> void:
 	_set_gameplay_enabled(false)
 	if modal_layer != null:
 		hide_modal()
+	if pause_layer != null:
+		pause_layer.visible = false
 	game_started = false
 	game_over = false
+	tutorial_active = false
+	tutorial = null
+	maze = STANDARD_MAZE.duplicate()
 	transitioning_to_level_2 = false
 	deaths_level_1 = 0
 	deaths_level_3 = 0
@@ -474,14 +523,22 @@ func start_secret_level(target_level: int) -> void:
 func _on_start_pressed() -> void:
 	soundtrack.play_cue("confirm")
 	start_secret_level(1)
+	_capture_after_gesture()
 
 func _on_quit_pressed() -> void:
 	Input.mouse_mode = Input.MOUSE_MODE_VISIBLE
-	get_tree().quit()
+	if OS.has_feature("web"):
+		show_modal("HASTA PRONTO", "Puedes cerrar esta pestana cuando quieras.\n\nO volver al inicio para seguir explorando.", "Volver al inicio", "to_menu")
+	else:
+		get_tree().quit()
 
 func _on_restart_pressed() -> void:
 	soundtrack.play_cue("confirm")
-	build_level(level)
+	if tutorial_active:
+		start_tutorial()
+	else:
+		build_level(level)
+		_capture_after_gesture()
 
 func _on_menu_pressed() -> void:
 	soundtrack.play_cue("confirm")
@@ -506,8 +563,12 @@ func clear_old_level() -> void:
 	detector_areas.clear()
 	color_pickups.clear()
 
-func build_level(new_level: int) -> void:
-	_set_gameplay_enabled(false)
+func build_level(new_level: int, training: bool = false) -> void:
+	_set_gameplay_enabled(false, false)
+	tutorial_active = training
+	tutorial = null
+	maze = PRACTICE_MAZE.duplicate() if training else STANDARD_MAZE.duplicate()
+	pause_layer.visible = false
 	hide_modal()
 	clear_old_level()
 	level = new_level
@@ -545,12 +606,17 @@ func build_level(new_level: int) -> void:
 					player.movement_bounds = Rect2(1.9, 1.9, (maze[0].length() - 1) * CELL - 3.8, (maze.size() - 1) * CELL - 3.8)
 				elif glyph == "E":
 					exit_area = world.marker(at, "exit", Color("#6fffc1"), "SALIDA / PORTAL")
-		create_enemies()
+		if tutorial_active:
+			create_practice_drone()
+			tutorial = Tutorial.new()
+			tutorial.setup(self)
+		else:
+			create_enemies()
 		if level == 3:
 			create_detectors()
-		message.text = "Busca el portal verde.\n\nRT inmoviliza a los drones por 3,5 s."
+		message.text = "Busca el portal verde.\n\nClic izquierdo inmoviliza a los drones por 3,5 s."
 		if level == 2:
-			message.text = "A activa la superposición.\n\nAtraviesa los muros y alcanza el portal."
+			message.text = "Espacio activa la superposicion.\n\nAtraviesa los muros y alcanza el portal."
 		elif level == 3:
 			message.text = "Evita los escáneres M mientras estás en superposición."
 	_set_gameplay_enabled(true)
@@ -561,6 +627,7 @@ func create_player(at: Vector3, yaw: float) -> QuantumPlayer:
 	body.position = at
 	generated_root.add_child(body)
 	body.set_look_angles(yaw)
+	body.mouse_capture_lost.connect(_pause_gameplay)
 	return body
 
 func create_enemies() -> void:
@@ -590,7 +657,7 @@ func create_detector(cell: Vector2i, in_wall: bool) -> void:
 	detector_areas.append(detector)
 
 func shoot_ray() -> bool:
-	if not game_started or game_over or is_modal_open() or ray_cooldown > 0.0 or not is_instance_valid(player) or not player.enabled:
+	if not game_started or game_over or is_modal_open() or is_paused() or ray_cooldown > 0.0 or not is_instance_valid(player) or not player.enabled:
 		return false
 	ray_cooldown = SHOT_COOLDOWN
 	last_shot_result = player.fire_ray()
@@ -607,6 +674,8 @@ func shoot_ray() -> bool:
 	tactical_hud.shot_flash = 0.16
 	tactical_hud.hit_flash = 0.18 if last_shot_hit else 0.0
 	soundtrack.play_cue("freeze" if last_shot_hit else "ray")
+	if tutorial_active and tutorial != null:
+		tutorial.observe_shot(last_shot_hit)
 	return last_shot_hit
 
 func toggle_superposition() -> void:
@@ -619,6 +688,8 @@ func toggle_superposition() -> void:
 	superposition_active = not superposition_active
 	player.superposed = superposition_active
 	world.set_phase(superposition_active)
+	if tutorial_active and tutorial != null:
+		tutorial.observe_ability()
 	phase_overlay.visible = superposition_active
 	soundtrack.play_cue("superposition_on" if superposition_active else "superposition_off")
 	message.text = "Superposición activa. Puedes atravesar los muros." if superposition_active else "Estado clásico. Los muros vuelven a ser sólidos."
@@ -645,7 +716,7 @@ func handle_wall_collapse() -> void:
 	if deaths_level_3 >= 3:
 		start_final_game_over()
 	else:
-		show_modal("ATRAPADO", "Colapsaste dentro del muro.\nReinicia el nivel.\nIntento %d de 3." % deaths_level_3, "[A] Reiniciar", "restart_level")
+		show_modal("ATRAPADO", "Colapsaste dentro del muro.\nReinicia el nivel.\nIntento %d de 3." % deaths_level_3, "Reiniciar (Enter)", "restart_level")
 
 func die() -> void:
 	if not game_started or game_over or is_modal_open():
@@ -674,13 +745,13 @@ func start_quantum_transition() -> void:
 	game_over = true
 	restart_button.visible = false
 	menu_button.visible = false
-	show_modal("NUEVO ESTADO", "El mundo clásico tiene límites.\n\nActiva la SUPERPOSICIÓN para atravesar muros. Tu rayo de coherencia seguirá inmovilizando drones.", "[A] Continuar al Nivel 2", "to_level_2")
+	show_modal("NUEVO ESTADO", "El mundo clásico tiene límites.\n\nActiva la SUPERPOSICIÓN para atravesar muros. Tu rayo de coherencia seguirá inmovilizando drones.", "Continuar al nivel 2 (Enter)", "to_level_2")
 
 func start_final_game_over() -> void:
 	game_over = true
 	restart_button.visible = false
 	menu_button.visible = false
-	show_modal("FIN DEL JUEGO", "Llegaste al tercer intento del nivel de medición.\n\nLa superposición colapsa al ser medida. Vuelve al laboratorio e inténtalo de nuevo.", "[A] Menú Principal", "to_menu")
+	show_modal("FIN DEL JUEGO", "Llegaste al tercer intento del nivel de medición.\n\nLa superposición colapsa al ser medida. Vuelve al laboratorio e inténtalo de nuevo.", "Menu principal (Enter)", "to_menu")
 
 func _on_exit_entered(body: Node3D) -> void:
 	if body != player or game_over or is_modal_open():
@@ -691,10 +762,10 @@ func _on_exit_entered(body: Node3D) -> void:
 		build_level(2)
 	elif level == 2:
 		game_over = true
-		show_modal("MEDICIÓN CUÁNTICA", "Ya puedes atravesar muros.\n\nAhora evita los escáneres M: si te miden, tu estado colapsará.", "[A] Continuar al Nivel 3", "to_level_3")
+		show_modal("MEDICIÓN CUÁNTICA", "Ya puedes atravesar muros.\n\nAhora evita los escáneres M: si te miden, tu estado colapsará.", "Continuar al nivel 3 (Enter)", "to_level_3")
 	elif level == 3:
 		game_over = true
-		show_modal("ENTRELAZAMIENTO", "Dos qubits compartirán un estado.\n\nA cambia la perspectiva entre Q1 y Q2. Acerca ambos a E y entrega los colores que pide el receptor.", "[A] Continuar al Nivel 4", "to_level_4")
+		show_modal("ENTRELAZAMIENTO", "Dos qubits compartirán un estado.\n\nEspacio cambia entre Q1 y Q2. Acerca ambos a E y entrega los colores que pide el receptor.", "Continuar al nivel 4 (Enter)", "to_level_4")
 
 func create_entanglement_level() -> void:
 	world.build_entanglement()
@@ -721,7 +792,7 @@ func create_entanglement_level() -> void:
 	create_color_pickup(Vector3(-7, 0, 0), "azul", Color("#51a8ff"))
 	create_color_pickup(Vector3(-7, 0, 4.6), "verde", Color("#6fffc1"))
 	player = qbit1
-	message.text = "A cambia de qubit.\n\nAcerca Q1 y Q2 a sus estaciones E para enlazarlos."
+	message.text = "Espacio cambia de qubit.\n\nAcerca Q1 y Q2 a sus estaciones E para enlazarlos."
 	update_entanglement_visuals()
 
 func create_color_pickup(at: Vector3, color_name: String, value: Color) -> void:
@@ -790,7 +861,7 @@ func deliver_entangled_color() -> void:
 	soundtrack.play_cue("victory" if entanglement_round >= 3 else "delivery")
 	if entanglement_round >= 3:
 		game_over = true
-		show_modal("MISIÓN CUMPLIDA", "Has escapado del mundo clásico.\n\nDominaste la superposición, la medición y el entrelazamiento.", "[A] Menú Principal", "to_menu")
+		show_modal("MISIÓN CUMPLIDA", "Has escapado del mundo clásico.\n\nDominaste la superposición, la medición y el entrelazamiento.", "Menu principal (Enter)", "to_menu")
 	else:
 		start_next_entanglement_round()
 		qbit2.position = Vector3(8, 0.85, 0)
@@ -877,28 +948,125 @@ func update_drone_paths() -> void:
 			drone.set_path(find_path(cell_at(drone.position), cell_at(player.position)))
 
 func update_hud() -> void:
+	if tutorial_active and tutorial != null:
+		update_tutorial_hud()
+		return
 	var names: Array[String] = ["LABERINTO CLÁSICO", "SUPERPOSICIÓN", "MEDICIÓN Y COLAPSO", "ENTRELAZAMIENTO"]
 	level_title_label.text = "PROTOCOLO %02d   /   %s" % [level, names[level - 1]]
 	phase_label.text = "%02d / 04" % level
 	if level == 4:
 		hud_label.text = "Q%d  |  %s  |  ENTREGAS %d/3" % [active_qubit, "RECEPTOR: " + requested_color_name.to_upper() if entangled else "ENLACE PENDIENTE", entanglement_round]
-		field_guide_label.text = "A · QUBITS\nCambia entre\nQ1 y Q2.\n\nQ1 toma el\ncolor pedido.\nQ2 lo entrega.\n\n%s" % (requested_color_name.to_upper() if entangled else "Ambos a E.")
+		field_guide_label.text = "ESPACIO - QUBITS\nCambia entre\nQ1 y Q2.\n\nQ1 toma el\ncolor pedido.\nQ2 lo entrega.\n\n%s" % (requested_color_name.to_upper() if entangled else "Ambos a E.")
 	else:
 		var state: String = "COLAPSADO" if superposition_locked else ("SUPERPOSICIÓN ACTIVA" if superposition_active else "ESTADO CLÁSICO")
 		hud_label.text = "%s  |  DRONES %d" % [state, enemies.size()]
-		field_guide_label.text = "RT · RAYO\nDetiene drones\n3,5 s · 28 m\n\n%s" % ("M · MEDICIÓN\nEvita escáneres\nal atravesar\nmuros." if level == 3 else ("A · ESTADO\nEl halo violeta\npermite cruzar\nlos muros." if level == 2 else "PORTAL VERDE\nTu salida del\nlaboratorio."))
+		field_guide_label.text = "CLIC - RAYO\nDetiene drones\n3,5 s / 28 m\n\n%s" % ("MEDICION - M\nEvita escáneres\nal atravesar\nmuros." if level == 3 else ("ESPACIO - ESTADO\nEl halo violeta\npermite cruzar\nlos muros." if level == 2 else "PORTAL VERDE\nTu salida del\nlaboratorio."))
 		if level == 1 or level == 3:
 			field_guide_label.text += "\n\nINTENTOS %d/3" % (deaths_level_1 if level == 1 else deaths_level_3)
 	if game_over:
-		instructions_label.text = "Stick / Cruceta: Elegir    A: Aceptar    X: Reiniciar    B / Start: Menú"
+		instructions_label.text = "Flechas: elegir  |  Enter: aceptar  |  R: reiniciar  |  Esc: menu"
 	elif level == 4:
-		instructions_label.text = "Stick izq.: Mover    Stick der.: Mirar    RT: Rayo    A: Cambiar qubit    B / Start: Menú"
+		instructions_label.text = "WASD: moverte  |  Raton: mirar  |  Clic: rayo  |  Espacio: cambiar qubit  |  Esc: pausa"
 	elif level >= 2:
-		instructions_label.text = "Stick izq.: Mover    Stick der.: Mirar    RT: Rayo    A: Superposición    B / Start: Menú"
+		instructions_label.text = "WASD: moverte  |  Raton: mirar  |  Clic: rayo  |  Espacio: superposicion  |  Esc: pausa"
 	else:
-		instructions_label.text = "Stick izq.: Mover    Stick der.: Mirar    RT: Rayo    B / Start: Menú"
-	weapon_label.text = "RAYO DE COHERENCIA · LISTO" if ray_cooldown <= 0.0 else "RECARGA DEL EMISOR · %.1f s" % ray_cooldown
+		instructions_label.text = "WASD: moverte  |  Raton: mirar  |  Clic: rayo  |  Esc: pausa"
+	weapon_label.text = "RAYO DE COHERENCIA - LISTO" if ray_cooldown <= 0.0 else "RECARGA DEL EMISOR - %.1f s" % ray_cooldown
 	weapon_label.add_theme_color_override("font_color", Design.CYAN if ray_cooldown <= 0.0 else Design.GOLD)
 
 func _exit_tree() -> void:
 	Input.mouse_mode = Input.MOUSE_MODE_VISIBLE
+
+func _create_menu_button(text: String, position_at: Vector2, dimensions: Vector2, primary: bool = false) -> Button:
+	var button := Button.new()
+	button.text = text
+	button.position = position_at
+	button.size = dimensions
+	button.action_mode = BaseButton.ACTION_MODE_BUTTON_PRESS
+	Design.style_button(button, primary)
+	menu_layer.add_child(button)
+	return button
+
+func create_pause() -> void:
+	pause_layer = CanvasLayer.new()
+	pause_layer.layer = 10
+	add_child(pause_layer)
+	var shade := ColorRect.new()
+	shade.size = SCREEN_SIZE
+	shade.color = Color(0.01, 0.025, 0.06, 0.78)
+	pause_layer.add_child(shade)
+	var panel := Design.create_panel(pause_layer, Rect2(390, 222, 500, 272), Design.VIOLET)
+	add_interface_label(panel, "PAUSA", Rect2(32, 24, 436, 40), 30, Design.TEXT, HORIZONTAL_ALIGNMENT_CENTER)
+	add_interface_label(panel, "Tu partida esta a salvo.\nContinua cuando estes listo.", Rect2(32, 78, 436, 58), 18, Design.MUTED, HORIZONTAL_ALIGNMENT_CENTER)
+	pause_resume_button = Button.new()
+	pause_resume_button.text = "Continuar (Enter)"
+	pause_resume_button.position = Vector2(44, 151)
+	pause_resume_button.size = Vector2(412, 44)
+	pause_resume_button.action_mode = BaseButton.ACTION_MODE_BUTTON_PRESS
+	Design.style_button(pause_resume_button, true)
+	pause_resume_button.pressed.connect(_resume_gameplay)
+	panel.add_child(pause_resume_button)
+	var back_button := Button.new()
+	back_button.text = "Menu principal (Esc)"
+	back_button.position = Vector2(44, 208)
+	back_button.size = Vector2(412, 40)
+	back_button.action_mode = BaseButton.ACTION_MODE_BUTTON_PRESS
+	Design.style_button(back_button)
+	back_button.add_theme_font_size_override("font_size", 16)
+	back_button.pressed.connect(show_menu)
+	panel.add_child(back_button)
+	pause_layer.visible = false
+
+func is_paused() -> bool:
+	return pause_layer != null and pause_layer.visible
+
+func _pause_gameplay() -> void:
+	if not game_started or game_over or is_modal_open() or is_paused():
+		return
+	_set_gameplay_enabled(false)
+	pause_layer.visible = true
+	soundtrack.set_scene("modal")
+	pause_resume_button.grab_focus()
+
+func _resume_gameplay() -> void:
+	if not is_paused():
+		return
+	pause_layer.visible = false
+	soundtrack.set_scene("entanglement" if level == 4 else ("quantum" if level >= 2 else "classic"))
+	_set_gameplay_enabled(true)
+	_capture_after_gesture()
+	update_hud()
+
+func _capture_after_gesture() -> void:
+	if is_instance_valid(player) and game_started and not game_over:
+		_fire_suppressed_until_release = true
+		player.request_mouse_capture()
+
+func start_tutorial() -> void:
+	soundtrack.play_cue("confirm")
+	deaths_level_1 = 0
+	deaths_level_3 = 0
+	build_level(2, true)
+	_capture_after_gesture()
+
+func create_practice_drone() -> void:
+	var drone := QuantumDrone.new()
+	drone.name = "PracticeDrone"
+	drone.position = Vector3(12, 1.3, 6)
+	generated_root.add_child(drone)
+	enemies.append(drone)
+
+func finish_tutorial() -> void:
+	game_over = true
+	show_modal("TUTORIAL COMPLETADO", "Ya sabes moverte, mirar y usar el rayo.\n\nAhora busca el portal de cada nivel.\nEl laboratorio cuantico te espera.", "Iniciar juego (Enter)", "tutorial_done")
+
+func update_tutorial_hud() -> void:
+	level_title_label.text = "TUTORIAL / PRACTICA A TU RITMO"
+	phase_label.text = "%02d / 04" % (tutorial.step + 1)
+	hud_label.text = tutorial.get_progress()
+	message.text = "Practica sin riesgo.\n\nEsc abre la pausa.\nPuedes volver al menu en cualquier momento."
+	field_guide_label.text = "W - adelante\nS - atras\nA - izquierda\nD - derecha\n\nRaton - mirar\nClic - disparar\n\nEspacio - estado"
+	tutorial_title_label.text = tutorial.get_title()
+	tutorial_body_label.text = tutorial.get_body()
+	tutorial_controls_label.text = tutorial.get_controls()
+	instructions_label.text = "WASD: moverte  |  Raton: mirar  |  Clic: rayo  |  Espacio: estado  |  Esc: pausa"

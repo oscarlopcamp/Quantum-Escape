@@ -98,7 +98,7 @@ func _update_frozen_visual() -> void:
 	_freeze_ring.visible = frozen
 	_freeze_caption.visible = frozen
 	if frozen:
-		_freeze_caption.text = "INMOVILIZADO · %.1f s" % frozen_time
+		_freeze_caption.text = "INMOVILIZADO - %.1f s" % frozen_time
 
 
 func _material(color: Color, glow: float = 0.0) -> StandardMaterial3D:

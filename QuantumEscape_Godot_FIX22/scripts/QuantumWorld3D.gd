@@ -201,10 +201,10 @@ func build_entanglement() -> void:
 	for x in [-7.0, 7.0]:
 		for z in [-5.0, 5.0]:
 			_point_light(Vector3(x, 2.8, z), CYAN if x < 0.0 else VIOLET, 0.75, 8.0)
-	var left_label := _label(_architecture, "REGISTRO 01  /  |0⟩", Vector3(-6.0, 2.4, -8.65), CYAN)
+	var left_label := _label(_architecture, "REGISTRO 01  /  ESTADO 0", Vector3(-6.0, 2.4, -8.65), CYAN)
 	left_label.billboard = BaseMaterial3D.BILLBOARD_DISABLED
 	left_label.rotation.y = 0.0
-	var right_label := _label(_architecture, "REGISTRO 02  /  |1⟩", Vector3(6.0, 2.4, -8.65), VIOLET)
+	var right_label := _label(_architecture, "REGISTRO 02  /  ESTADO 1", Vector3(6.0, 2.4, -8.65), VIOLET)
 	right_label.billboard = BaseMaterial3D.BILLBOARD_DISABLED
 	right_label.rotation.y = 0.0
 
@@ -249,7 +249,7 @@ func marker(position: Vector3, kind: String, tint: Color, caption: String = "") 
 			_detector(root, tint)
 			label_height = 2.72
 			if caption.is_empty():
-				caption = "MEDICIÓN  /  M"
+				caption = "MEDICION  /  M"
 		"pad", "station", "receiver":
 			_pad(root, tint)
 			label_height = 1.15
