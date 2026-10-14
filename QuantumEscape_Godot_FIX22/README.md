@@ -1,4 +1,12 @@
-# Quantum Escape FIX22
+# Quantum Escape 3D
+
+Videojuego educativo en primera persona sobre computación cuántica. Explora un laboratorio futurista, inmoviliza drones con un rayo de coherencia y completa desafíos de superposición, medición y entrelazamiento.
+
+## Probar el sistema en línea
+
+Puedes visitar la [demostración de Quantum Escape](https://oscarlopcamp.github.io/Quantum-Escape/) para conocer y probar el funcionamiento del sistema directamente desde tu navegador.
+
+La demostración funciona **sin base de datos** y no requiere instalar Godot.
 
 ## Diseño del laboratorio cuántico
 
@@ -38,7 +46,7 @@ La composición original está en `audio/quantum_ambient.wav` y `audio/quantum_p
 2. Conecta el control a la Mac con un cable USB-C que transfiera **datos**. Un cable que solo carga no sirve. Si aparece el aviso de acceso al accesorio, pulsa **Permitir**.
 3. Revisa que macOS lo reconozca en **Configuración del Sistema → Controles de videojuegos**.
 4. Abre `project.godot` con Godot y pulsa **Ejecutar proyecto**. Da foco a la ventana del juego. En el menú aparecerá **Mando detectado** junto al nombre del control.
-5. Selecciona **Iniciar experimento** con el stick izquierdo o la cruceta y pulsa **A**.
+5. Selecciona **Iniciar en 3D** con el stick izquierdo o la cruceta y pulsa **A**.
 
 | Acción | Xbox |
 | --- | --- |
