@@ -14,6 +14,8 @@ Abre `project.godot` con Godot 4.7 y pulsa **Ejecutar proyecto** o **F5**. En el
 
 El tutorial tiene cuatro pasos: moverte, mirar con el ratón, congelar un dron y activar la superposición antes de llegar al portal verde. El dron permanece quieto y no te persigue. No hay castigos ni límite de tiempo; atravesar un muro es opcional.
 
+**Oscar**, tu robot asistente, se presenta en el menú y te acompaña desde el primer piso: empiezas como un bit atrapado en el laboratorio y después descubres las habilidades de un qubit. Sus diálogos cortos explican cada nivel y reaccionan a los disparos, la medición y las entregas. En el tutorial, Oscar indica el siguiente paso. Su tarjeta permanece a un lado de la pantalla y deja libre la mira.
+
 ## Controles de PC y navegador
 
 | Acción | Control |
@@ -41,6 +43,8 @@ El rayo congela a un dron durante **3,5 segundos**. Apunta con la mira; los muro
 ## Diseño y sonido
 
 El laboratorio conserva la paleta cian/violeta, los circuitos de neón y la interfaz holográfica. El emisor lleva un qubit inspirado en la esfera de Bloch; los portales son verdes y los escáneres de medición, dorados.
+
+Oscar tiene ojos animados, antena y un núcleo orbital. El juego lo dibuja y anima directamente, sin descargar imágenes ni fuentes adicionales; sus instrucciones aparecen como texto y no requieren voz.
 
 La música electrónica original acompaña cada nivel, con efectos para el rayo, la congelación y las acciones cuánticas. En el navegador, el audio comienza tras interactuar con el juego. Pulsa **M** o el botón **Sonido** para silenciarlo.
 

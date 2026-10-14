@@ -4,3 +4,6 @@
 
 # macOS
 .DS_Store
+
+# Respaldos locales de versiones
+QuantumEscape_Godot_FIX22/backups/

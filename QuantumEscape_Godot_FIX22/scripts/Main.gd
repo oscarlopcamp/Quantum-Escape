@@ -9,6 +9,7 @@ const QuantumPlayer = preload("res://scripts/QuantumPlayer3D.gd")
 const QuantumDrone = preload("res://scripts/QuantumDrone3D.gd")
 const TacticalHUD = preload("res://scripts/QuantumTacticalHUD.gd")
 const Tutorial = preload("res://scripts/QuantumTutorial.gd")
+const Assistant = preload("res://scripts/QuantumAssistant.gd")
 const SCREEN_SIZE := Vector2(1280, 720)
 const CELL: float = 3.0
 const FREEZE_SECONDS: float = 3.5
@@ -85,6 +86,13 @@ var pause_resume_button: Button
 var modal_accept_button: Button
 var modal_menu_button: Button
 var _fire_suppressed_until_release: bool = false
+var menu_assistant: Assistant
+var oscar: Assistant
+var _oscar_hint_text: String = ""
+var _oscar_hint_topic: String = ""
+var _oscar_event_remaining: float = 0.0
+var _oscar_tutorial_key: String = ""
+var _oscar_ray_tip_shown: bool = false
 
 const STANDARD_MAZE: Array[String] = [
 	"####################", "#P     #        #  #", "# ### ### ####### ##",
@@ -123,6 +131,10 @@ func _physics_process(delta: float) -> void:
 			drone.velocity = Vector3.ZERO
 	if not controlling:
 		return
+	if _oscar_event_remaining > 0.0:
+		_oscar_event_remaining = maxf(0.0, _oscar_event_remaining - delta)
+		if _oscar_event_remaining == 0.0:
+			oscar.speak(_oscar_hint_text, _oscar_hint_topic)
 	if not Input.is_action_pressed("fire"):
 		_fire_suppressed_until_release = false
 	ray_cooldown = maxf(0.0, ray_cooldown - delta)
@@ -248,6 +260,7 @@ func create_menu() -> void:
 	title_label.add_theme_font_override("font", ThemeDB.fallback_font)
 	add_interface_label(menu_layer, "Escapa de un laboratorio cuantico.\nCongela drones, atraviesa muros\ny conecta dos qubits para encontrar la salida.", Rect2(100, 306, 540, 82), 20, Design.MUTED)
 	var hero := QuantumSprite.new()
+	hero.name = "MenuQubit"
 	hero.position = Vector2(903, 312)
 	hero.radius = 126.0
 	hero.color = Design.CYAN
@@ -256,8 +269,13 @@ func create_menu() -> void:
 	add_interface_label(menu_layer, "ESTADO CUANTICO  /  QUBIT", Rect2(708, 114, 390, 28), 14, Design.CYAN, HORIZONTAL_ALIGNMENT_CENTER)
 	add_interface_label(menu_layer, "0", Rect2(875, 152, 56, 28), 20, Design.TEXT, HORIZONTAL_ALIGNMENT_CENTER)
 	add_interface_label(menu_layer, "1", Rect2(875, 455, 56, 28), 20, Design.TEXT, HORIZONTAL_ALIGNMENT_CENTER)
-	add_interface_label(menu_layer, "Dos estados. Muchas posibilidades.", Rect2(683, 499, 440, 40), 21, Design.VIOLET, HORIZONTAL_ALIGNMENT_CENTER)
-	add_interface_label(menu_layer, "01 CLASICO  /  02 SUPERPOSICION\n03 MEDICION  /  04 ENTRELAZAMIENTO", Rect2(693, 558, 430, 52), 13, Design.MUTED, HORIZONTAL_ALIGNMENT_CENTER)
+	add_interface_label(menu_layer, "Dos estados. Muchas posibilidades.", Rect2(683, 492, 440, 32), 21, Design.VIOLET, HORIZONTAL_ALIGNMENT_CENTER)
+	menu_assistant = Assistant.new()
+	menu_assistant.name = "OscarWelcome"
+	menu_assistant.configure_menu()
+	menu_assistant.position = Vector2(689, 541)
+	menu_layer.add_child(menu_assistant)
+	menu_assistant.speak("Soy Oscar, tu asistente. Te guiare en cada piso. Si es tu primera vez, prueba el tutorial.", "", "happy")
 	start_button = _create_menu_button("Iniciar juego", Vector2(100, 400), Vector2(330, 52), true)
 	start_button.pressed.connect(_on_start_pressed)
 	tutorial_button = _create_menu_button("Tutorial corto", Vector2(100, 468), Vector2(330, 48))
@@ -310,11 +328,17 @@ func create_hud() -> void:
 	hud_label = add_interface_label(hud, "", Rect2(571, 29, 630, 40), 14, Design.CYAN, HORIZONTAL_ALIGNMENT_RIGHT)
 	hud_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 
-	Design.create_panel(hud, Rect2(20, 122, 164, 390), Design.VIOLET)
-	add_interface_label(hud, "PROTOCOLO ACTIVO", Rect2(36, 140, 133, 25), 11, Design.MUTED)
+	# Keep the legacy status labels as data; Oscar presents the guidance on screen.
 	phase_label = add_interface_label(hud, "01 / 04", Rect2(36, 167, 136, 38), 25, Design.VIOLET)
+	phase_label.visible = false
 	message = add_interface_label(hud, "", Rect2(36, 224, 132, 273), 15, Design.TEXT)
+	message.visible = false
 	message.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	oscar = Assistant.new()
+	oscar.name = "OscarGuide"
+	oscar.configure_hud()
+	oscar.position = Vector2(20, 122)
+	hud.add_child(oscar)
 
 	Design.create_panel(hud, Rect2(1100, 122, 160, 390))
 	add_interface_label(hud, "GUÍA DE CAMPO", Rect2(1116, 140, 130, 24), 11, Design.CYAN)
@@ -360,11 +384,10 @@ func create_modal() -> void:
 
 	var panel: Panel = Design.create_panel(modal_layer, Rect2(290, 145, 700, 430), Design.VIOLET)
 	panel.name = "ModalPanel"
-	add_interface_label(panel, "TRANSMISIÓN CUÁNTICA   /   Q-LAB", Rect2(34, 21, 630, 22), 11, Design.VIOLET)
-	var emblem := QuantumSprite.new()
-	emblem.radius = 22.0
-	emblem.position = Vector2(57, 73)
-	emblem.color = Design.VIOLET
+	add_interface_label(panel, "OSCAR   /   TRANSMISION DEL LABORATORIO", Rect2(34, 21, 630, 22), 11, Design.VIOLET)
+	var emblem := Assistant.new()
+	emblem.configure_portrait()
+	emblem.position = Vector2(20, 38)
 	panel.add_child(emblem)
 	modal_title = add_interface_label(panel, "", Rect2(94, 52, 573, 50), 32, Design.TEXT)
 
@@ -454,7 +477,9 @@ func _set_gameplay_enabled(value: bool, release_pointer: bool = true) -> void:
 	if weapon_label != null:
 		weapon_label.visible = value and not tutorial_active
 	if tutorial_panel != null:
-		tutorial_panel.visible = value and tutorial_active
+		tutorial_panel.visible = false
+	if oscar != null:
+		oscar.visible = value
 
 func show_modal(title: String, body: String, action: String, mode: String) -> void:
 	soundtrack.set_scene("modal")
@@ -502,6 +527,9 @@ func show_menu() -> void:
 	game_over = false
 	tutorial_active = false
 	tutorial = null
+	_oscar_event_remaining = 0.0
+	_oscar_tutorial_key = ""
+	_oscar_ray_tip_shown = false
 	maze = STANDARD_MAZE.duplicate()
 	transitioning_to_level_2 = false
 	deaths_level_1 = 0
@@ -581,6 +609,9 @@ func build_level(new_level: int, training: bool = false) -> void:
 	_path_timer = 0.0
 	last_shot_hit = false
 	last_shot_result = {}
+	_oscar_event_remaining = 0.0
+	_oscar_tutorial_key = ""
+	_oscar_ray_tip_shown = false
 	menu_layer.visible = false
 	hud.visible = true
 	restart_button.visible = false
@@ -620,6 +651,8 @@ func build_level(new_level: int, training: bool = false) -> void:
 		elif level == 3:
 			message.text = "Evita los escáneres M mientras estás en superposición."
 	_set_gameplay_enabled(true)
+	if not tutorial_active:
+		introduce_oscar_level()
 	update_hud()
 
 func create_player(at: Vector3, yaw: float) -> QuantumPlayer:
@@ -676,14 +709,19 @@ func shoot_ray() -> bool:
 	soundtrack.play_cue("freeze" if last_shot_hit else "ray")
 	if tutorial_active and tutorial != null:
 		tutorial.observe_shot(last_shot_hit)
+	elif last_shot_hit and not _oscar_ray_tip_shown:
+		_oscar_ray_tip_shown = true
+		_oscar_say("Buen disparo! Ese dron queda inmovilizado 3,5 s. Aprovecha para pasar antes de que vuelva a moverse.", "RAYO / BUEN DISPARO", "happy", 6.0)
 	return last_shot_hit
 
 func toggle_superposition() -> void:
 	if level < 2 or level > 3 or superposition_locked:
 		message.text = "Tu estado colapsó. Ya no puedes activar la superposición en este intento."
+		_oscar_say("Nos midieron y nuestro estado colapso. En este intento no podemos reactivar la superposicion. Busquemos una ruta por los pasillos.", "ESTADO BLOQUEADO", "warning", 9.0)
 		return
 	if superposition_active and is_wall_at(player.position):
 		message.text = "Sal del muro antes de volver al estado clásico."
+		_oscar_say("Un momento! Estamos dentro de un muro. Sal de el antes de pulsar Espacio para apagar la superposicion.", "DENTRO DEL MURO", "warning", 9.0)
 		return
 	superposition_active = not superposition_active
 	player.superposed = superposition_active
@@ -693,6 +731,8 @@ func toggle_superposition() -> void:
 	phase_overlay.visible = superposition_active
 	soundtrack.play_cue("superposition_on" if superposition_active else "superposition_off")
 	message.text = "Superposición activa. Puedes atravesar los muros." if superposition_active else "Estado clásico. Los muros vuelven a ser sólidos."
+	if not tutorial_active:
+		_oscar_say("Superposicion activa! Los muros ya no nos frenan. Busca el portal verde; los drones aun pueden atraparnos." if superposition_active else "Volvimos al estado clasico. Los muros vuelven a ser solidos; recorramos los pasillos.", "SUPERPOSICION ACTIVA" if superposition_active else "ESTADO CLASICO", "happy" if superposition_active else "normal", 9.0)
 	update_hud()
 
 func _on_detector_entered(body: Node3D, detector: Node3D) -> void:
@@ -708,6 +748,9 @@ func _on_detector_entered(body: Node3D, detector: Node3D) -> void:
 		handle_wall_collapse()
 	else:
 		message.text = "¡MEDICIÓN! Tu estado colapsó. Debes llegar al portal sin atravesar muros."
+		_oscar_hint_text = "La superposicion esta bloqueada en este intento. Lleguemos al portal verde por los pasillos. Clic izquierdo detiene a los drones."
+		_oscar_hint_topic = "PISO 03 / ESTADO COLAPSADO"
+		_oscar_say("Oh no! El escaner nos midio y perdimos la superposicion. Aun podemos escapar: llega al portal sin atravesar muros.", "MEDICION / ESTADO COLAPSADO", "warning", 9.0)
 	update_hud()
 
 func handle_wall_collapse() -> void:
@@ -716,7 +759,7 @@ func handle_wall_collapse() -> void:
 	if deaths_level_3 >= 3:
 		start_final_game_over()
 	else:
-		show_modal("ATRAPADO", "Colapsaste dentro del muro.\nReinicia el nivel.\nIntento %d de 3." % deaths_level_3, "Reiniciar (Enter)", "restart_level")
+		show_modal("ATRAPADO", "El escaner nos midio dentro de un muro!\nTendremos que reiniciar este piso.\n\nEvita las zonas M en el siguiente intento.\nIntento %d de 3." % deaths_level_3, "Reiniciar (Enter)", "restart_level")
 
 func die() -> void:
 	if not game_started or game_over or is_modal_open():
@@ -735,6 +778,8 @@ func die() -> void:
 	game_over = true
 	_set_gameplay_enabled(false)
 	message.text = "Un dron te alcanzó.\n\nReinicia o vuelve al menú."
+	oscar.visible = true
+	_oscar_say("Un dron nos alcanzo! Podemos intentarlo de nuevo: R reinicia este piso. La proxima vez congela al bot antes de pasar.", "INTENTEMOS DE NUEVO", "warning")
 	restart_button.visible = true
 	menu_button.visible = true
 	restart_button.grab_focus()
@@ -745,13 +790,13 @@ func start_quantum_transition() -> void:
 	game_over = true
 	restart_button.visible = false
 	menu_button.visible = false
-	show_modal("NUEVO ESTADO", "El mundo clásico tiene límites.\n\nActiva la SUPERPOSICIÓN para atravesar muros. Tu rayo de coherencia seguirá inmovilizando drones.", "Continuar al nivel 2 (Enter)", "to_level_2")
+	show_modal("NUEVO ESTADO", "Descubri otro camino! Pasemos al segundo piso\ny probemos un estado nuevo.\n\nComo qubit, podremos activar la superposicion\ncon Espacio para atravesar muros.", "Continuar al nivel 2 (Enter)", "to_level_2")
 
 func start_final_game_over() -> void:
 	game_over = true
 	restart_button.visible = false
 	menu_button.visible = false
-	show_modal("FIN DEL JUEGO", "Llegaste al tercer intento del nivel de medición.\n\nLa superposición colapsa al ser medida. Vuelve al laboratorio e inténtalo de nuevo.", "Menu principal (Enter)", "to_menu")
+	show_modal("FIN DEL JUEGO", "Lo intentamos tres veces en este piso.\nLos escaneres pueden hacer colapsar nuestro estado.\n\nVolvamos al laboratorio. Yo te acompanare\nen el siguiente intento!", "Menu principal (Enter)", "to_menu")
 
 func _on_exit_entered(body: Node3D) -> void:
 	if body != player or game_over or is_modal_open():
@@ -762,10 +807,10 @@ func _on_exit_entered(body: Node3D) -> void:
 		build_level(2)
 	elif level == 2:
 		game_over = true
-		show_modal("MEDICIÓN CUÁNTICA", "Ya puedes atravesar muros.\n\nAhora evita los escáneres M: si te miden, tu estado colapsará.", "Continuar al nivel 3 (Enter)", "to_level_3")
+		show_modal("MEDICION CUANTICA", "Llegamos al tercer piso!\nPero el laboratorio tiene escaneres M.\n\nSi nos miden mientras usamos superposicion,\nnuestro estado colapsara. Vamos con cuidado!", "Continuar al nivel 3 (Enter)", "to_level_3")
 	elif level == 3:
 		game_over = true
-		show_modal("ENTRELAZAMIENTO", "Dos qubits compartirán un estado.\n\nEspacio cambia entre Q1 y Q2. Acerca ambos a E y entrega los colores que pide el receptor.", "Continuar al nivel 4 (Enter)", "to_level_4")
+		show_modal("ENTRELAZAMIENTO", "Ultimo piso! Ahora contamos con Q1 y Q2.\n\nLlevemos cada uno a su estacion E para enlazarlos.\nEspacio cambia de qubit. Tres entregas de colores\nabriran nuestra salida!", "Continuar al nivel 4 (Enter)", "to_level_4")
 
 func create_entanglement_level() -> void:
 	world.build_entanglement()
@@ -813,6 +858,8 @@ func handle_entanglement_space() -> void:
 	soundtrack.play_cue("switch")
 	_activate_qubit(2 if active_qubit == 1 else 1)
 	message.text = "Controlas Q%d.\n\n%s" % [active_qubit, "Llega a tu estación E." if not entangled else ("Toma el color pedido." if active_qubit == 1 else "Entrega el color en el receptor.")]
+	var task: String = "Llevalo a su estacion E. Necesitamos a los dos qubits alli para enlazarlos." if not entangled else ("Busca el cristal %s que pide el receptor." % requested_color_name if active_qubit == 1 else ("Lleva el color %s al receptor." % requested_color_name if delivery_pending else "Q1 aun debe tomar el color %s. Pulsa Espacio para volver a Q1." % requested_color_name))
+	_oscar_say("Ahora controlas Q%d. %s" % [active_qubit, task], "Q%d / SIGUIENTE PASO" % active_qubit, "normal", 9.0)
 	update_hud()
 
 func check_entanglement_level() -> void:
@@ -825,6 +872,7 @@ func check_entanglement_level() -> void:
 			_activate_qubit(1)
 			soundtrack.play_cue("entangled")
 			message.text = "Enlace establecido.\n\nQ1 toma %s y Q2 lo entrega al receptor." % requested_color_name.to_upper()
+			_oscar_say("Enlace listo! El receptor pide %s. Q1 debe tomar ese color; luego Q2 lo llevara al receptor." % requested_color_name, "ENLACE ESTABLECIDO", "happy", 9.0)
 		return
 	if delivery_pending and active_qubit == 2 and flat_distance(qbit2.position, delivery_area.position) < 1.15:
 		deliver_entangled_color()
@@ -849,8 +897,12 @@ func apply_entangled_color(color_name: String, color_value: Color) -> void:
 		_activate_qubit(2)
 		soundtrack.play_cue("confirm")
 		message.text = "Ambos qubits son %s.\n\nLleva Q2 al receptor para entregar." % color_name.to_upper()
+		_oscar_hint_text = "La entrega del color %s esta pendiente. Lleva Q2 al receptor. Espacio cambia entre Q1 y Q2." % requested_color_name
+		_oscar_hint_topic = "Q2 / ENTREGA PENDIENTE"
+		_oscar_say("Perfecto! Ambos qubits tienen el color %s. Ahora controlas Q2: lleva el color al receptor." % color_name, "COLOR CORRECTO / Q2", "happy", 9.0)
 	else:
 		message.text = "El receptor pide %s.\n\nQ1 debe tomar ese color." % requested_color_name.to_upper()
+		_oscar_say("Ese no es el color pedido. El receptor necesita %s. Con Q1, busca el cristal de ese color." % requested_color_name, "BUSQUEMOS OTRO COLOR", "warning", 9.0)
 	update_hud()
 
 func deliver_entangled_color() -> void:
@@ -861,13 +913,14 @@ func deliver_entangled_color() -> void:
 	soundtrack.play_cue("victory" if entanglement_round >= 3 else "delivery")
 	if entanglement_round >= 3:
 		game_over = true
-		show_modal("MISIÓN CUMPLIDA", "Has escapado del mundo clásico.\n\nDominaste la superposición, la medición y el entrelazamiento.", "Menu principal (Enter)", "to_menu")
+		show_modal("MISION CUMPLIDA", "Escapamos! Completamos las tres entregas\ny recorrimos los cuatro pisos.\n\nGracias por jugar conmigo!\nSoy Oscar, y hasta la proxima.", "Menu principal (Enter)", "to_menu")
 	else:
 		start_next_entanglement_round()
 		qbit2.position = Vector3(8, 0.85, 0)
 		qbit2.set_look_angles(PI / 2.0)
 		_activate_qubit(1)
 		message.text = "Entrega completa.\n\nAhora Q1 toma %s." % requested_color_name.to_upper()
+		_oscar_say("Entrega lista! Faltan %d colores. Ahora controlas Q1: toma %s para seguir abriendo la salida." % [3 - entanglement_round, requested_color_name], "ENTREGA %d DE 3" % entanglement_round, "happy", 9.0)
 	update_hud()
 
 func start_next_entanglement_round() -> void:
@@ -875,6 +928,8 @@ func start_next_entanglement_round() -> void:
 	var values: Array[Color] = [Color("#ff667c"), Color("#51a8ff"), Color("#6fffc1")]
 	requested_color_name = names[entanglement_round % 3]
 	requested_color_value = values[entanglement_round % 3]
+	_oscar_hint_text = "Q1 debe tomar el color %s que pide el receptor. El juego cambiara a Q2 para que lo lleves al receptor." % requested_color_name
+	_oscar_hint_topic = "PISO 04 / COLOR %s" % requested_color_name.to_upper()
 	world.update_marker_color(delivery_visual, requested_color_value, "RECEPTOR / " + requested_color_name.to_upper())
 
 func update_entanglement_visuals() -> void:
@@ -1058,7 +1113,7 @@ func create_practice_drone() -> void:
 
 func finish_tutorial() -> void:
 	game_over = true
-	show_modal("TUTORIAL COMPLETADO", "Ya sabes moverte, mirar y usar el rayo.\n\nAhora busca el portal de cada nivel.\nEl laboratorio cuantico te espera.", "Iniciar juego (Enter)", "tutorial_done")
+	show_modal("TUTORIAL COMPLETADO", "Bien hecho! Ya sabes moverte, mirar,\ncongelar drones y activar la superposicion.\n\nEstamos listos para escapar del laboratorio!\nYo te acompanare en cada piso.", "Iniciar juego (Enter)", "tutorial_done")
 
 func update_tutorial_hud() -> void:
 	level_title_label.text = "TUTORIAL / PRACTICA A TU RITMO"
@@ -1070,3 +1125,48 @@ func update_tutorial_hud() -> void:
 	tutorial_body_label.text = tutorial.get_body()
 	tutorial_controls_label.text = tutorial.get_controls()
 	instructions_label.text = "WASD: moverte  |  Raton: mirar  |  Clic: rayo  |  Espacio: estado  |  Esc: pausa"
+	update_oscar_tutorial()
+
+func _oscar_say(text: String, topic: String = "", mood: String = "normal", duration: float = 0.0) -> void:
+	_oscar_event_remaining = duration
+	if oscar != null:
+		oscar.speak(text, topic, mood)
+
+func introduce_oscar_level() -> void:
+	match level:
+		1:
+			_oscar_hint_text = "Busquemos el portal verde. W avanza, S retrocede, A y D van a los lados. Usa el raton para mirar y clic izquierdo para congelar bots."
+			_oscar_hint_topic = "PISO 01 / BUSCA EL PORTAL"
+			_oscar_say("Oh no! Somos un bit atrapado en un laboratorio de bots. Escapemos por el portal verde! Clic izquierdo congela a los drones durante 3,5 s.", "PISO 01 / SOMOS UN BIT", "warning")
+		2:
+			_oscar_hint_text = "Espacio cambia nuestro estado. Con superposicion activa podemos cruzar muros. Busquemos el portal verde y evitemos a los drones."
+			_oscar_hint_topic = "PISO 02 / PRUEBA UN ATAJO"
+			_oscar_say("Segundo piso! Ahora somos un qubit. En este laboratorio, la superposicion permite cruzar muros. Pulsa Espacio y probemos un atajo!", "PISO 02 / SOMOS UN QUBIT", "happy")
+		3:
+			_oscar_hint_text = "Evita los escaneres M al usar superposicion: nos harian perderla en este intento. Clic congela drones. Nuestra salida es el portal verde."
+			_oscar_hint_topic = "PISO 03 / CUIDADO CON M"
+			_oscar_say("Tercer piso! Hay escaneres M. Si nos miden con la superposicion activa, la perdemos en este intento. Evita los escaneres y busca el portal verde.", "PISO 03 / MEDICION", "warning")
+		4:
+			_oscar_hint_text = "Llevemos Q1 y Q2 a sus estaciones E. Espacio cambia de qubit. Al enlazarlos, Q1 tomara el color pedido y Q2 lo entregara al receptor."
+			_oscar_hint_topic = "PISO 04 / ENLAZA LOS QUBITS"
+			_oscar_say("Ultimo piso! Tenemos Q1 y Q2. Lleva cada uno a su estacion E para enlazarlos. Espacio cambia de qubit; despues entregaremos tres colores.", "PISO 04 / ENTRELAZAMIENTO", "happy")
+
+func update_oscar_tutorial() -> void:
+	# Tutorial state is polled every frame; publish dialogue only when it changes.
+	var key: String = "%d:%s" % [tutorial.step, tutorial.get_body()]
+	if key == _oscar_tutorial_key:
+		return
+	_oscar_tutorial_key = key
+	var text: String
+	match tutorial.step:
+		0:
+			text = "Practiquemos juntos! W avanza, S retrocede, A va a la izquierda y D a la derecha. Camina un poco; aqui ningun bot puede atraparte."
+		1:
+			text = "Eso es! Ahora mueve el raton para mirar a tu alrededor. Encuentra al dron rojo: sera nuestro blanco de practica."
+		2:
+			text = "Apunta la mira al dron rojo y haz clic izquierdo. El rayo lo congela durante 3,5 s. Aprovecharemos ese tiempo para pasar!"
+		_:
+			text = "Superposicion aprendida! Ve al portal verde con WASD. Puedes atravesar los muros mientras siga activa." if superposition_active or tutorial.get_progress() == "Llega al portal verde" else "Ahora pulsa Espacio para activar la superposicion. Puedes cruzar muros mientras siga activa. Vamos al portal verde!"
+	_oscar_hint_text = text
+	_oscar_hint_topic = "PRACTICA / PASO %d DE 4" % (tutorial.step + 1)
+	_oscar_say(text, _oscar_hint_topic, "happy")

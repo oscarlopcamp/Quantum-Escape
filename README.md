@@ -10,6 +10,8 @@ La demostración funciona en el navegador, sin base de datos y sin instalar Godo
 
 El menú ofrece **Iniciar juego**, **Tutorial corto** y **Salir**. Puedes entrar directamente al primer nivel o practicar cuatro acciones en un entrenamiento opcional: moverte, mirar, congelar un dron y usar superposición para llegar al portal. El entrenamiento no tiene castigos ni límite de tiempo.
 
+**Oscar**, tu robot asistente, se presenta en el menú y te acompaña en cada piso. Sus diálogos explican el paso de bit a qubit, las habilidades y las entregas; también te guía durante el tutorial. Su tarjeta animada deja libre la mira.
+
 | Acción | Control |
 | --- | --- |
 | Moverte / elegir opciones | WASD o flechas |
